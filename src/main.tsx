@@ -11,6 +11,7 @@ function isFlowBarHash() {
 }
 
 function mount(view: "flowbar" | "main") {
+  if (view === "flowbar") document.documentElement.classList.add("flowbar-root");
   ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
     <React.StrictMode>
       {view === "flowbar" ? (

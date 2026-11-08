@@ -2,6 +2,8 @@ use crate::error::{AppError, AppResult};
 use crate::paths::settings_path;
 use serde::{Deserialize, Serialize};
 use std::fs;
+use std::io::{Read, Write};
+use std::time::Duration;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -104,21 +106,50 @@ pub fn ensure_model(model_id: &str) -> AppResult<std::path::PathBuf> {
         .find(|m| m.id == model_id)
         .ok_or_else(|| AppError::msg(format!("Unknown model: {model_id}")))?;
     let dest = crate::paths::models_dir().join(&info.id);
-    if dest.exists() {
+    let expected_size = match info.id.as_str() {
+        "ggml-tiny.bin" => 77_691_713,
+        "ggml-base.bin" => 147_951_465,
+        "ggml-small.bin" => 487_601_967,
+        "ggml-medium.bin" => 1_533_763_059,
+        _ => return Err(AppError::msg("Unknown model size")),
+    };
+    let valid = |path: &std::path::Path| -> std::io::Result<bool> {
+        let mut file = fs::File::open(path)?;
+        let mut magic = [0; 4];
+        Ok(file.metadata()?.len() == expected_size
+            && file.read_exact(&mut magic).is_ok()
+            && u32::from_le_bytes(magic) == 0x6767_6d6c)
+    };
+    if valid(&dest).unwrap_or(false) {
         return Ok(dest);
     }
-    tracing::info!("Downloading Whisper model {} …", info.id);
-    let resp = reqwest::blocking::get(&info.url)
-        .map_err(|e| AppError::msg(format!("download failed: {e}")))?;
-    if !resp.status().is_success() {
-        return Err(AppError::msg(format!(
-            "download HTTP {}",
-            resp.status()
-        )));
+
+    tracing::info!("Downloading Whisper model {}", info.id);
+    let temporary = dest.with_extension("bin.part");
+    let result = (|| {
+        let client = reqwest::blocking::Client::builder()
+            .connect_timeout(Duration::from_secs(20))
+            .timeout(Duration::from_secs(1800))
+            .build()
+            .map_err(|error| AppError::msg(format!("Model download: {error}")))?;
+        let mut response = client.get(&info.url).send()
+            .and_then(reqwest::blocking::Response::error_for_status)
+            .map_err(|error| AppError::msg(format!("Model download: {error}")))?
+            .take(expected_size + 1);
+        let mut file = fs::File::create(&temporary)?;
+        std::io::copy(&mut response, &mut file)
+            .map_err(|error| AppError::msg(format!("Saving model: {error}")))?;
+        file.flush()?;
+        file.sync_all()?;
+        drop(file);
+        if !valid(&temporary)? {
+            return Err(AppError::msg("Downloaded model is incomplete or invalid. Retry the download."));
+        }
+        fs::rename(&temporary, &dest)?;
+        Ok(dest)
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(temporary);
     }
-    let bytes = resp
-        .bytes()
-        .map_err(|e| AppError::msg(format!("download body: {e}")))?;
-    fs::write(&dest, &bytes)?;
-    Ok(dest)
+    result
 }

@@ -27,6 +27,11 @@ fn get_status(state: State<'_, SharedState>) -> RuntimeStatus {
 }
 
 #[tauri::command]
+fn mic_level(state: State<'_, SharedState>) -> f32 {
+    state.recorder.level()
+}
+
+#[tauri::command]
 fn get_settings(state: State<'_, SharedState>) -> AppSettings {
     state.settings.lock().clone()
 }
@@ -46,31 +51,77 @@ fn list_mics() -> AppResult<Vec<String>> {
     audio::Recorder::list_input_devices()
 }
 
-#[tauri::command]
-fn ensure_model(state: State<'_, SharedState>, model_id: String) -> AppResult<String> {
-    state.stt.ensure_loaded(&model_id)?;
-    let path = settings::ensure_model(&model_id)?;
-    Ok(path.display().to_string())
+async fn run_audio<T: Send + 'static>(
+    state: &SharedState,
+    work: impl FnOnce(&AppState) -> AppResult<T> + Send + 'static,
+) -> AppResult<T> {
+    let state = state.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let _operation = state.audio_operation.lock();
+        work(&state)
+    })
+    .await
+    .map_err(|error| crate::error::AppError::msg(error.to_string()))?
 }
 
 #[tauri::command]
-fn start_dictation(state: State<'_, SharedState>) -> AppResult<()> {
-    state.start_dictation(SessionMode::Dictating)
+async fn ensure_model(state: State<'_, SharedState>, model_id: String) -> AppResult<String> {
+    run_audio(state.inner(), move |state| {
+        if state.recorder.is_recording() {
+            return Err(crate::error::AppError::msg("Finish recording before changing the model"));
+        }
+        state.stt.ensure_loaded(&model_id)?;
+        let mut settings = state.settings.lock();
+        if settings.model_id != model_id {
+            let mut updated = settings.clone();
+            updated.model_id = model_id;
+            crate::settings::save_settings(&updated)?;
+            *settings = updated;
+        }
+        state.stt.status().model_path.ok_or_else(|| {
+            crate::error::AppError::msg("Whisper did not load the model")
+        })
+    }).await
 }
 
 #[tauri::command]
-fn start_command(state: State<'_, SharedState>) -> AppResult<()> {
-    state.start_dictation(SessionMode::Command)
+async fn start_dictation(app: AppHandle, state: State<'_, SharedState>) -> AppResult<()> {
+    run_audio(state.inner(), move |state| {
+        state.start_dictation(SessionMode::Dictating)?;
+        let _ = app.emit("localflow://recording", true);
+        Ok(())
+    }).await
 }
 
 #[tauri::command]
-fn stop_dictation(state: State<'_, SharedState>) -> AppResult<Dictation> {
-    state.stop_and_transcribe()
+async fn start_command(state: State<'_, SharedState>) -> AppResult<()> {
+    run_audio(state.inner(), |state| state.start_dictation(SessionMode::Command)).await
 }
 
 #[tauri::command]
-fn toggle_hands_free(state: State<'_, SharedState>) -> AppResult<bool> {
-    state.toggle_hands_free()
+async fn stop_dictation(app: AppHandle, state: State<'_, SharedState>) -> AppResult<Dictation> {
+    run_audio(state.inner(), move |state| {
+        let result = state.stop_and_transcribe();
+        let _ = app.emit("localflow://recording", state.recorder.is_recording());
+        if let Ok(item) = &result {
+            let _ = app.emit("localflow://dictation", item);
+        }
+        result
+    }).await
+}
+
+#[tauri::command]
+async fn cancel_dictation(app: AppHandle, state: State<'_, SharedState>) -> AppResult<()> {
+    run_audio(state.inner(), move |state| {
+        state.cancel_dictation()?;
+        let _ = app.emit("localflow://recording", false);
+        Ok(())
+    }).await
+}
+
+#[tauri::command]
+async fn toggle_hands_free(state: State<'_, SharedState>) -> AppResult<bool> {
+    run_audio(state.inner(), AppState::toggle_hands_free).await
 }
 
 #[tauri::command]
@@ -108,13 +159,13 @@ fn set_snippets(snips: Snippets) -> AppResult<()> {
 }
 
 #[tauri::command]
-fn start_meeting(state: State<'_, SharedState>) -> AppResult<()> {
-    state.start_meeting()
+async fn start_meeting(state: State<'_, SharedState>) -> AppResult<()> {
+    run_audio(state.inner(), AppState::start_meeting).await
 }
 
 #[tauri::command]
-fn stop_meeting(state: State<'_, SharedState>, title: Option<String>) -> AppResult<Meeting> {
-    state.stop_meeting(title)
+async fn stop_meeting(state: State<'_, SharedState>, title: Option<String>) -> AppResult<Meeting> {
+    run_audio(state.inner(), move |state| state.stop_meeting(title)).await
 }
 
 #[tauri::command]
@@ -164,8 +215,8 @@ fn spawn_flowbar(app: &AppHandle) -> AppResult<()> {
         return Ok(());
     }
 
-    let win_w_logical = 280.0;
-    let win_h_logical = 168.0;
+    let win_w_logical = 300.0;
+    let win_h_logical = 105.0;
     let window = WebviewWindowBuilder::new(app, "flowbar", WebviewUrl::App("index.html#flowbar".into()))
         .title("LocalFlow Bar")
         .inner_size(win_w_logical, win_h_logical)
@@ -181,6 +232,20 @@ fn spawn_flowbar(app: &AppHandle) -> AppResult<()> {
         .visible(true)
         .focused(false)
         .build()?;
+
+    #[cfg(windows)]
+    if let Ok(handle) = window.hwnd() {
+        use windows::Win32::Foundation::HWND;
+        use windows::Win32::UI::WindowsAndMessaging::{
+            GetWindowLongW, SetWindowLongW, GWL_EXSTYLE, WS_EX_NOACTIVATE,
+        };
+        let hwnd = HWND(handle.0);
+        // HUD clicks should leave the text editor focused for Ctrl+V.
+        unsafe {
+            let style = GetWindowLongW(hwnd, GWL_EXSTYLE);
+            SetWindowLongW(hwnd, GWL_EXSTYLE, style | WS_EX_NOACTIVATE.0 as i32);
+        }
+    }
 
     if let Ok(Some(monitor)) = window.current_monitor() {
         let scale = monitor.scale_factor();
@@ -263,61 +328,56 @@ fn register_shortcuts(app: &AppHandle, state: SharedState) -> anyhow::Result<()>
         )
     });
 
-    let st1 = st.clone();
-    let h1 = app_handle.clone();
-    app.global_shortcut().on_shortcut(ptt, move |_app, _s, event| {
-        if event.state == ShortcutState::Pressed {
-            let _ = st1.start_dictation(SessionMode::Dictating);
-            let _ = h1.emit("localflow://recording", true);
-        } else if event.state == ShortcutState::Released {
-            match st1.stop_and_transcribe() {
-                Ok(item) => {
-                    let _ = h1.emit("localflow://dictation", &item);
+    let (send, receive) = tokio::sync::mpsc::unbounded_channel();
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut held = None;
+        let mut receive = receive;
+        while let Some((mode, pressed)) = receive.blocking_recv() {
+            let _operation = st.audio_operation.lock();
+            let result = match mode {
+                None if pressed => {
+                    if st.recorder.is_recording() {
+                        let _ = app_handle.emit("localflow://flow-phase", "processing");
+                    }
+                    let result = st.toggle_hands_free();
+                    let _ = app_handle.emit("localflow://recording", st.recorder.is_recording());
+                    result.map(|on| {
+                        let _ = app_handle.emit("localflow://handsfree", on);
+                    })
                 }
-                Err(e) => {
-                    let _ = h1.emit("localflow://error", e.to_string());
+                Some(mode) if pressed && held.is_none() && !st.recorder.is_recording() => {
+                    let _ = app_handle.emit("localflow://flow-phase", "starting");
+                    st.start_dictation(mode).map(|()| {
+                        held = Some(mode);
+                        let _ = app_handle.emit("localflow://recording", true);
+                    })
                 }
+                Some(mode) if !pressed && held == Some(mode) => {
+                    held = None;
+                    if !st.recorder.is_recording() {
+                        continue;
+                    }
+                    let _ = app_handle.emit("localflow://flow-phase", "processing");
+                    let _ = app_handle.emit("localflow://recording", false);
+                    st.stop_and_transcribe().map(|item| {
+                        let _ = app_handle.emit("localflow://dictation", &item);
+                    })
+                }
+                _ => continue,
+            };
+            if let Err(error) = result {
+                let _ = app_handle.emit("localflow://error", error.to_string());
             }
-            let _ = h1.emit("localflow://recording", false);
+            let _ = app_handle.emit("localflow://flow-phase", "idle");
         }
-    })?;
+    });
 
-    let st2 = st.clone();
-    let h2 = app_handle.clone();
-    app.global_shortcut()
-        .on_shortcut(hands, move |_app, _s, event| {
-            if event.state != ShortcutState::Pressed {
-                return;
-            }
-            match st2.toggle_hands_free() {
-                Ok(on) => {
-                    let _ = h2.emit("localflow://handsfree", on);
-                    let _ = h2.emit("localflow://recording", on);
-                }
-                Err(e) => {
-                    let _ = h2.emit("localflow://error", e.to_string());
-                }
-            }
+    for (shortcut, mode) in [(ptt, Some(SessionMode::Dictating)), (hands, None), (cmd, Some(SessionMode::Command))] {
+        let send = send.clone();
+        app.global_shortcut().on_shortcut(shortcut, move |_, _, event| {
+            let _ = send.send((mode, event.state == ShortcutState::Pressed));
         })?;
-
-    let st3 = st.clone();
-    let h3 = app_handle.clone();
-    app.global_shortcut().on_shortcut(cmd, move |_app, _s, event| {
-        if event.state == ShortcutState::Pressed {
-            let _ = st3.start_dictation(SessionMode::Command);
-            let _ = h3.emit("localflow://recording", true);
-        } else if event.state == ShortcutState::Released {
-            match st3.stop_and_transcribe() {
-                Ok(item) => {
-                    let _ = h3.emit("localflow://dictation", &item);
-                }
-                Err(e) => {
-                    let _ = h3.emit("localflow://error", e.to_string());
-                }
-            }
-            let _ = h3.emit("localflow://recording", false);
-        }
-    })?;
+    }
 
     Ok(())
 }
@@ -354,6 +414,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_status,
             get_settings,
+            mic_level,
             set_settings,
             list_models,
             list_mics,
@@ -361,6 +422,7 @@ pub fn run() {
             start_dictation,
             start_command,
             stop_dictation,
+            cancel_dictation,
             toggle_hands_free,
             list_history,
             search_history,

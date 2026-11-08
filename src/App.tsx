@@ -122,6 +122,8 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
   const [updating, setUpdating] = useState(false);
+  const [checkingUpdate, setCheckingUpdate] = useState(false);
+  const [updateMessage, setUpdateMessage] = useState("");
   const [flowBarOn, setFlowBarOn] = useState(true);
 
   const refresh = useCallback(async () => {
@@ -177,8 +179,10 @@ export default function App() {
     (async () => {
       try {
         const update = await checkUpdate();
-        if (!cancelled && update) {
-          setUpdateInfo({ version: update.version, body: update.body });
+        if (update) {
+          const info = { version: update.version, body: update.body };
+          await update.close();
+          if (!cancelled) setUpdateInfo(info);
         }
       } catch {
         // ignore
@@ -195,19 +199,47 @@ export default function App() {
     [history],
   );
 
-  async function installUpdate() {
-    setUpdating(true);
+  async function checkForUpdates() {
+    setCheckingUpdate(true);
+    setUpdateMessage("Checking GitHub for updates…");
     try {
       const update = await checkUpdate();
       if (!update) {
-        setStatusMsg("No update available");
         setUpdateInfo(null);
+        setUpdateMessage(`You're up to date (v${__APP_VERSION__}).`);
         return;
       }
-      await update.downloadAndInstall();
+      const info = { version: update.version, body: update.body };
+      await update.close();
+      setUpdateInfo(info);
+      setUpdateMessage(`Version ${info.version} is available.`);
+    } catch (error) {
+      setUpdateMessage(`Couldn't check for updates: ${String(error)}`);
+    } finally {
+      setCheckingUpdate(false);
+    }
+  }
+
+  async function installUpdate() {
+    setUpdating(true);
+    setUpdateMessage("Downloading and installing update…");
+    try {
+      const update = await checkUpdate();
+      if (!update) {
+        setUpdateInfo(null);
+        setUpdateMessage(`You're up to date (v${__APP_VERSION__}).`);
+        return;
+      }
+      try {
+        await update.downloadAndInstall();
+      } finally {
+        await update.close();
+      }
       await relaunchApp();
-    } catch (e) {
-      setStatusMsg(String(e));
+    } catch (error) {
+      const message = `Couldn't install update: ${String(error)}`;
+      setUpdateMessage(message);
+      setStatusMsg(message);
     } finally {
       setUpdating(false);
     }
@@ -222,6 +254,7 @@ export default function App() {
   async function downloadModel() {
     if (!settings) return;
     setBusy(true);
+    setStatusMsg("Preparing Whisper model…");
     try {
       const path = await invoke<string>("ensure_model", { modelId: settings.modelId });
       setStatusMsg(`Model ready: ${path}`);
@@ -366,7 +399,7 @@ export default function App() {
                     <p className="text-sm font-medium">Update {updateInfo.version}</p>
                     <p className="text-xs text-white/50">{updateInfo.body || "Newer LocalFlow build ready."}</p>
                   </div>
-                  <Button size="sm" isDisabled={updating} onPress={installUpdate}>
+                  <Button size="sm" isDisabled={updating || checkingUpdate} onPress={installUpdate}>
                     {updating ? "Installingâ€¦" : "Install"}
                   </Button>
                 </div>
@@ -687,10 +720,18 @@ export default function App() {
                   >
                     Save
                   </Button>
-                  <Button color="tertiary" isDisabled={updating} onPress={installUpdate}>
-                    Check for updates
+                  <Button color="tertiary" isDisabled={updating || checkingUpdate} onPress={checkForUpdates}>
+                    {checkingUpdate ? "Checking…" : "Check for updates"}
                   </Button>
+                  {updateInfo && (
+                    <Button color="secondary" isDisabled={updating || checkingUpdate} onPress={installUpdate}>
+                      {updating ? "Installing…" : `Install ${updateInfo.version}`}
+                    </Button>
+                  )}
                 </div>
+                <p role="status" className="break-words text-sm text-white/70">
+                  {updateMessage}
+                </p>
               </div>
             </div>
           </div>

@@ -7,6 +7,7 @@ use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextPar
 pub struct SttEngine {
     ctx: Mutex<Option<WhisperContext>>,
     loaded_model: Mutex<Option<PathBuf>>,
+    loading: Mutex<()>,
 }
 
 impl SttEngine {
@@ -14,13 +15,14 @@ impl SttEngine {
         Self {
             ctx: Mutex::new(None),
             loaded_model: Mutex::new(None),
+            loading: Mutex::new(()),
         }
     }
 
     pub fn ensure_loaded(&self, model_id: &str) -> AppResult<()> {
+        let _loading = self.loading.lock();
         let path = ensure_model(model_id)?;
-        let mut loaded = self.loaded_model.lock();
-        if loaded.as_ref() == Some(&path) && self.ctx.lock().is_some() {
+        if self.loaded_model.lock().as_ref() == Some(&path) {
             return Ok(());
         }
         tracing::info!("Loading Whisper model from {}", path.display());
@@ -31,7 +33,7 @@ impl SttEngine {
         )
         .map_err(|e| AppError::msg(format!("whisper load: {e}")))?;
         *self.ctx.lock() = Some(ctx);
-        *loaded = Some(path);
+        *self.loaded_model.lock() = Some(path);
         Ok(())
     }
 

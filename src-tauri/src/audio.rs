@@ -71,6 +71,7 @@ impl Recorder {
                     .default_input_config()
                     .map_err(|e| format!("mic config: {e}"))?;
                 *sample_rate.lock() = config.sample_rate().0;
+                let channels = usize::from(config.channels());
                 let err_fn = |e| tracing::error!("audio stream error: {e}");
                 let stream = match config.sample_format() {
                     SampleFormat::F32 => {
@@ -79,7 +80,9 @@ impl Recorder {
                         device.build_input_stream(
                             &cfg,
                             move |data: &[f32], _| {
-                                samples.lock().extend_from_slice(data);
+                                samples.lock().extend(data.chunks_exact(channels).map(|frame| {
+                                    frame.iter().sum::<f32>() / channels as f32
+                                }));
                             },
                             err_fn,
                             None,
@@ -92,7 +95,10 @@ impl Recorder {
                             &cfg,
                             move |data: &[i16], _| {
                                 let mut g = samples.lock();
-                                g.extend(data.iter().map(|s| *s as f32 / i16::MAX as f32));
+                                g.extend(data.chunks_exact(channels).map(|frame| {
+                                    frame.iter().map(|sample| f32::from(*sample)).sum::<f32>()
+                                        / (channels as f32 * i16::MAX as f32)
+                                }));
                             },
                             err_fn,
                             None,
@@ -105,8 +111,9 @@ impl Recorder {
                             &cfg,
                             move |data: &[u16], _| {
                                 let mut g = samples.lock();
-                                g.extend(data.iter().map(|s| {
-                                    (*s as f32 / u16::MAX as f32) * 2.0 - 1.0
+                                g.extend(data.chunks_exact(channels).map(|frame| {
+                                    let average = frame.iter().map(|sample| f32::from(*sample)).sum::<f32>() / channels as f32;
+                                    average * 2.0 / u16::MAX as f32 - 1.0
                                 }));
                             },
                             err_fn,
@@ -156,6 +163,13 @@ impl Recorder {
         let samples = std::mem::take(&mut *self.samples.lock());
         let rate = *self.sample_rate.lock();
         Ok((samples, rate))
+    }
+
+    pub fn level(&self) -> f32 {
+        let samples = self.samples.lock();
+        let recent = &samples[samples.len().saturating_sub(1024)..];
+        let energy: f32 = recent.iter().map(|sample| sample * sample).sum();
+        (energy / recent.len().max(1) as f32).sqrt()
     }
 
     pub fn is_recording(&self) -> bool {

@@ -1,12 +1,12 @@
 use crate::state::SharedState;
 use axum::extract::{Path, Query, State};
-use axum::http::StatusCode;
+use axum::http::{header, HeaderMap, Request, StatusCode};
+use axum::middleware::{self, Next};
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::Deserialize;
 use serde_json::{json, Value};
-use tower_http::cors::CorsLayer;
 
 pub async fn serve_mcp(state: SharedState, port: u16) {
     let app = Router::new()
@@ -18,12 +18,18 @@ pub async fn serve_mcp(state: SharedState, port: u16) {
         .route("/api/dictations/search", get(api_search))
         .route("/api/meetings", get(api_list_meetings))
         .route("/api/meetings/{id}", get(api_get_meeting))
-        .layer(CorsLayer::permissive())
+        .layer(middleware::from_fn(validate_origin))
         .with_state(state);
 
     let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
     tracing::info!("LocalFlow MCP/HTTP listening on http://{addr}");
-    let listener = tokio::net::TcpListener::bind(addr).await.expect("bind mcp");
+    let listener = match tokio::net::TcpListener::bind(addr).await {
+        Ok(listener) => listener,
+        Err(error) => {
+            tracing::error!("Cannot bind LocalFlow MCP on {addr}: {error}");
+            return;
+        }
+    };
     axum::serve(listener, app).await.expect("mcp serve");
 }
 
@@ -94,15 +100,35 @@ async fn api_get_meeting(
     }
 }
 
-/// Minimal JSON-RPC style MCP tool dispatch for agent clients.
-async fn mcp_rpc(State(state): State<SharedState>, Json(body): Json<Value>) -> impl IntoResponse {
-    let method = body.get("method").and_then(|m| m.as_str()).unwrap_or("");
-    let id = body.get("id").cloned().unwrap_or(json!(1));
-    let params = body.get("params").cloned().unwrap_or(json!({}));
+async fn validate_origin(request: Request<axum::body::Body>, next: Next) -> axum::response::Response {
+    if request.headers().contains_key(header::ORIGIN) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    next.run(request).await
+}
 
+const MCP_PROTOCOL: &str = "2025-03-26";
+
+async fn mcp_rpc(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> impl IntoResponse {
+    let method = body.get("method").and_then(Value::as_str).unwrap_or("");
+    if headers.get("mcp-protocol-version").is_some_and(|version| version != MCP_PROTOCOL) {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    let Some(id) = body.get("id") else {
+        return if body.get("jsonrpc").and_then(Value::as_str) == Some("2.0") && !method.is_empty() {
+            StatusCode::ACCEPTED
+        } else {
+            StatusCode::BAD_REQUEST
+        }.into_response();
+    };
+    let params = body.get("params").cloned().unwrap_or(json!({}));
     let result = match method {
         "initialize" => json!({
-            "protocolVersion": "2024-11-05",
+            "protocolVersion": MCP_PROTOCOL,
             "capabilities": {"tools": {}},
             "serverInfo": {"name": "localflow", "version": env!("CARGO_PKG_VERSION")}
         }),
@@ -149,7 +175,7 @@ async fn mcp_rpc(State(state): State<SharedState>, Json(body): Json<Value>) -> i
             };
             json!({
                 "content": [{"type":"text","text": serde_json::to_string_pretty(&content).unwrap_or_default()}],
-                "isError": false
+                "isError": content.get("error").is_some()
             })
         }
         "ping" => json!({}),

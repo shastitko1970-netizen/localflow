@@ -13,6 +13,7 @@ use std::time::Instant;
 pub struct AppState {
     pub settings: Mutex<AppSettings>,
     pub recorder: Recorder,
+    pub audio_operation: Mutex<()>,
     pub stt: SttEngine,
     pub history: HistoryDb,
     pub session: Mutex<SessionState>,
@@ -57,6 +58,7 @@ impl AppState {
         Ok(Self {
             settings: Mutex::new(load_settings()),
             recorder: Recorder::new(),
+            audio_operation: Mutex::new(()),
             stt: SttEngine::new(),
             history: HistoryDb::open()?,
             session: Mutex::new(SessionState::default()),
@@ -80,6 +82,9 @@ impl AppState {
     }
 
     pub fn start_dictation(&self, mode: SessionMode) -> AppResult<()> {
+        if self.recorder.is_recording() {
+            return Err(AppError::msg("A recording is already active"));
+        }
         let settings = self.settings.lock().clone();
         self.stt.ensure_loaded(&settings.model_id)?;
         self.recorder
@@ -91,23 +96,28 @@ impl AppState {
     }
 
     pub fn stop_and_transcribe(&self) -> AppResult<Dictation> {
+        if self.session.lock().meeting_active {
+            return Err(AppError::msg("Stop the meeting from Notetaker"));
+        }
         let settings = self.settings.lock().clone();
         let (samples, rate) = self.recorder.stop()?;
-        let duration_ms = self
-            .session
-            .lock()
-            .started_at
-            .map(|t| t.elapsed().as_millis() as u64)
-            .unwrap_or(0);
-        let mode = self.session.lock().mode;
-
-        if samples.len() < 1600 {
-            self.session.lock().mode = SessionMode::Idle;
-            return Err(AppError::msg("Recording too short"));
-        }
+        let (duration_ms, mode) = {
+            let mut session = self.session.lock();
+            let duration = session.started_at.take().map(|t| t.elapsed().as_millis() as u64);
+            let mode = std::mem::take(&mut session.mode);
+            session.hands_free = false;
+            (duration.unwrap_or(0), mode)
+        };
 
         let pcm = crate::audio::resample_to_16k(&samples, rate);
+        if pcm.len() < 1600 {
+            return Err(AppError::msg("Recording too short"));
+        }
         let raw = self.stt.transcribe(&pcm, &settings.language)?;
+
+        if raw.trim().is_empty() || raw.trim() == "[BLANK_AUDIO]" {
+            return Err(AppError::msg("No speech detected. Check the selected microphone."));
+        }
 
         let text = match mode {
             SessionMode::Command => {
@@ -146,35 +156,39 @@ impl AppState {
             paste_text(&text)?;
         }
 
-        {
-            let mut session = self.session.lock();
-            session.mode = SessionMode::Idle;
-            session.started_at = None;
-            session.last_text = Some(text);
-            if !session.hands_free {
-                // keep idle
-            }
-        }
+        self.session.lock().last_text = Some(text);
         Ok(item)
     }
 
-    pub fn toggle_hands_free(&self) -> AppResult<bool> {
+    pub fn cancel_dictation(&self) -> AppResult<()> {
+        if self.session.lock().meeting_active {
+            return Err(AppError::msg("Stop the meeting from Notetaker"));
+        }
+        self.recorder.stop()?;
         let mut session = self.session.lock();
-        if session.hands_free {
-            session.hands_free = false;
-            drop(session);
-            if self.recorder.is_recording() {
-                let _ = self.stop_and_transcribe();
-            }
+        session.mode = SessionMode::Idle;
+        session.started_at = None;
+        session.hands_free = false;
+        Ok(())
+    }
+
+    pub fn toggle_hands_free(&self) -> AppResult<bool> {
+        if self.session.lock().meeting_active {
+            return Err(AppError::msg("Stop the meeting from Notetaker"));
+        }
+        if self.recorder.is_recording() {
+            self.stop_and_transcribe()?;
             return Ok(false);
         }
-        session.hands_free = true;
-        drop(session);
         self.start_dictation(SessionMode::Dictating)?;
+        self.session.lock().hands_free = true;
         Ok(true)
     }
 
     pub fn start_meeting(&self) -> AppResult<()> {
+        if self.recorder.is_recording() {
+            return Err(AppError::msg("A recording is already active"));
+        }
         let settings = self.settings.lock().clone();
         self.stt.ensure_loaded(&settings.model_id)?;
         self.recorder
@@ -188,6 +202,9 @@ impl AppState {
     }
 
     pub fn stop_meeting(&self, title: Option<String>) -> AppResult<Meeting> {
+        if !self.session.lock().meeting_active {
+            return Err(AppError::msg("No meeting is active"));
+        }
         let settings = self.settings.lock().clone();
         let (samples, rate) = self.recorder.stop()?;
         let duration_ms = {
@@ -218,8 +235,9 @@ impl AppState {
     }
 
     pub fn update_settings(&self, settings: AppSettings) -> AppResult<AppSettings> {
+        let mut current = self.settings.lock();
         save_settings(&settings)?;
-        *self.settings.lock() = settings.clone();
+        *current = settings.clone();
         Ok(settings)
     }
 }

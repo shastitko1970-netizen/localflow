@@ -106,7 +106,7 @@ export async function listen<T>(
 
 export async function checkUpdate() {
   if (!isTauri) return null;
-  return tauriCheck();
+  return tauriCheck({ timeout: 15_000 });
 }
 
 export async function relaunchApp() {
