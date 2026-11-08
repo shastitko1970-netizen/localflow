@@ -164,15 +164,18 @@ fn spawn_flowbar(app: &AppHandle) -> AppResult<()> {
         return Ok(());
     }
 
+    let win_w_logical = 280.0;
+    let win_h_logical = 168.0;
     let window = WebviewWindowBuilder::new(app, "flowbar", WebviewUrl::App("index.html#flowbar".into()))
         .title("LocalFlow Bar")
-        .inner_size(260.0, 140.0)
+        .inner_size(win_w_logical, win_h_logical)
         .resizable(false)
         .maximizable(false)
         .minimizable(false)
         .closable(false)
         .decorations(false)
         .transparent(true)
+        .shadow(false)
         .always_on_top(true)
         .skip_taskbar(true)
         .visible(true)
@@ -182,10 +185,10 @@ fn spawn_flowbar(app: &AppHandle) -> AppResult<()> {
     if let Ok(Some(monitor)) = window.current_monitor() {
         let scale = monitor.scale_factor();
         let size = monitor.size();
-        let win_w = (260.0 * scale) as i32;
-        let win_h = (140.0 * scale) as i32;
+        let win_w = (win_w_logical * scale) as i32;
+        let win_h = (win_h_logical * scale) as i32;
         let x = monitor.position().x + (size.width as i32 - win_w) / 2;
-        let y = monitor.position().y + size.height as i32 - win_h - (48.0 * scale) as i32;
+        let y = monitor.position().y + size.height as i32 - win_h - (56.0 * scale) as i32;
         let _ = window.set_position(tauri::PhysicalPosition::new(x, y));
     }
 

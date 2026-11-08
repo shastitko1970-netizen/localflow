@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.6 — Flow Bar polish
+- Glass card + black Dictate pill + three circular orbs (mic / waveform / notes)
+- Matches Wispr-style floating HUD denser and cleaner
+
 ## 0.4.5 — Flow Bar + Wispr-like shell
 - Floating always-on-top Flow Bar pill (dictate / mic / history)
 - Icon-rail shell closer to Wispr Flow (Dictation feed, settings modal)

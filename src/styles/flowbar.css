@@ -7,16 +7,141 @@ html.flowbar-root #root {
 
 html.flowbar-root body.flowbar-body {
   overflow: hidden;
+  margin: 0;
 }
 
 .flowbar-shell {
   background: transparent;
+  box-sizing: border-box;
 }
 
-.flowbar-pill {
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+/* Browser-only: show glass against a colorful desk so the pill reads correctly */
+.flowbar-shell--preview {
+  background:
+    radial-gradient(900px 420px at 20% 80%, #5b3d8f 0%, transparent 55%),
+    radial-gradient(700px 380px at 85% 70%, #1f6b4a 0%, transparent 50%),
+    linear-gradient(160deg, #2a1f45 0%, #16352e 100%);
+}
+
+.flowbar-glass {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  padding: 16px 18px 14px;
+  border-radius: 28px;
+  background: linear-gradient(
+    180deg,
+    rgba(42, 40, 52, 0.72) 0%,
+    rgba(22, 22, 28, 0.78) 100%
+  );
+  border: 1px solid rgba(186, 176, 230, 0.38);
   box-shadow:
-    0 12px 32px rgba(0, 0, 0, 0.45),
-    0 0 0 1px rgba(255, 255, 255, 0.06);
+    0 18px 48px rgba(0, 0, 0, 0.45),
+    0 2px 8px rgba(0, 0, 0, 0.28),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(28px) saturate(1.35);
+  -webkit-backdrop-filter: blur(28px) saturate(1.35);
+}
+
+.flowbar-dictate {
+  display: inline-flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 0.4em;
+  min-width: 196px;
+  height: 40px;
+  padding: 0 22px;
+  border: 0;
+  border-radius: 999px;
+  background: #0a0a0a;
+  color: #f5f5f5;
+  font-family: Inter, "Segoe UI", system-ui, sans-serif;
+  font-size: 13.5px;
+  font-weight: 450;
+  letter-spacing: -0.01em;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.06) inset,
+    0 6px 16px rgba(0, 0, 0, 0.35);
+  transition: background 140ms ease, transform 140ms ease;
+}
+
+.flowbar-dictate:hover {
+  background: #111;
+}
+
+.flowbar-dictate:active {
+  transform: scale(0.985);
+}
+
+.flowbar-dictate.is-recording {
+  background: #b42318;
+}
+
+.flowbar-dictate.is-recording:hover {
+  background: #c43228;
+}
+
+.flowbar-dictate:disabled {
+  opacity: 0.7;
+  cursor: wait;
+}
+
+.flowbar-dictate-label {
+  font-weight: 450;
+}
+
+.flowbar-dictate-keys {
+  font-weight: 650;
+}
+
+.flowbar-actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+
+.flowbar-orb {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border: 0;
+  border-radius: 999px;
+  background: #0a0a0a;
+  color: #f3f3f3;
+  cursor: pointer;
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.05) inset,
+    0 4px 12px rgba(0, 0, 0, 0.3);
+  transition: background 140ms ease, transform 140ms ease, color 140ms ease;
+}
+
+.flowbar-orb--mic {
+  background: #2a2a2e;
+}
+
+.flowbar-orb:hover {
+  background: #161616;
+}
+
+.flowbar-orb--mic:hover {
+  background: #36363c;
+}
+
+.flowbar-orb:active {
+  transform: scale(0.96);
+}
+
+.flowbar-orb.is-live {
+  color: #ff6b61;
+}
+
+.flowbar-orb:disabled {
+  opacity: 0.7;
+  cursor: wait;
 }

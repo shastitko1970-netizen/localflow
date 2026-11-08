@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Microphone01, Recording01, File06 } from "@untitledui/icons";
+import { Microphone01, File06 } from "@untitledui/icons";
 import { invoke, listen, isTauri } from "@/lib/tauri";
 import { cx } from "@/utils/cx";
 
@@ -12,6 +12,16 @@ function formatHotkey(spec: string) {
     .replace(/Super/gi, "Win")
     .replace(/Control/gi, "Ctrl")
     .replace(/\+/g, " + ");
+}
+
+function WaveBars({ active }: { active?: boolean }) {
+  return (
+    <svg width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden>
+      <rect x="2" y="6" width="2.5" height="6" rx="1.25" fill="currentColor" opacity={active ? 1 : 0.95} />
+      <rect x="7.75" y="3" width="2.5" height="12" rx="1.25" fill="currentColor" />
+      <rect x="13.5" y="5" width="2.5" height="8" rx="1.25" fill="currentColor" opacity={active ? 1 : 0.95} />
+    </svg>
+  );
 }
 
 export default function FlowBar() {
@@ -71,51 +81,53 @@ export default function FlowBar() {
   }
 
   return (
-    <div className="flowbar-shell flex h-screen w-screen flex-col items-center justify-end gap-2 pb-1 select-none">
-      <button
-        type="button"
-        data-tauri-drag-region
-        onClick={toggleDictate}
-        disabled={busy}
-        className={cx(
-          "flowbar-pill flex h-11 min-w-[188px] items-center justify-center rounded-full px-6 text-sm text-white shadow-xl transition",
-          recording ? "bg-red-600 hover:bg-red-500" : "bg-black/90 hover:bg-black",
-        )}
-      >
-        <span className="pointer-events-none">
-          {recording ? "Listening…" : "Dictate"}{" "}
-          <span className="font-semibold">{hotkey}</span>
-        </span>
-      </button>
+    <div
+      className={cx(
+        "flowbar-shell flex h-screen w-screen items-end justify-center pb-2 select-none",
+        !isTauri && "flowbar-shell--preview",
+      )}
+    >
+      <div className="flowbar-glass" data-tauri-drag-region>
+        <button
+          type="button"
+          className={cx("flowbar-dictate", recording && "is-recording")}
+          onClick={toggleDictate}
+          disabled={busy}
+        >
+          <span className="flowbar-dictate-label">
+            {recording ? "Listening…" : "Dictate"}
+          </span>
+          <span className="flowbar-dictate-keys">{hotkey}</span>
+        </button>
 
-      <div className="flex items-center gap-2">
-        <button
-          type="button"
-          onClick={toggleDictate}
-          className={cx(
-            "flex h-11 items-center justify-center rounded-full px-4 shadow-lg transition",
-            recording ? "bg-red-600 text-white" : "bg-zinc-800/95 text-white hover:bg-zinc-700",
-          )}
-          aria-label="Toggle microphone"
-        >
-          <Microphone01 className="size-5" />
-        </button>
-        <button
-          type="button"
-          onClick={toggleDictate}
-          className="flex size-11 items-center justify-center rounded-full bg-black/90 text-white shadow-lg transition hover:bg-zinc-900"
-          aria-label="Record"
-        >
-          <Recording01 className={cx("size-5", recording && "text-red-400")} />
-        </button>
-        <button
-          type="button"
-          onClick={() => openMain("history")}
-          className="flex size-11 items-center justify-center rounded-full bg-black/90 text-white shadow-lg transition hover:bg-zinc-900"
-          aria-label="Open history"
-        >
-          <File06 className="size-5" />
-        </button>
+        <div className="flowbar-actions">
+          <button
+            type="button"
+            className={cx("flowbar-orb flowbar-orb--mic", recording && "is-live")}
+            onClick={toggleDictate}
+            aria-label="Microphone"
+            disabled={busy}
+          >
+            <Microphone01 className="size-[18px]" strokeWidth={1.75} />
+          </button>
+          <button
+            type="button"
+            className={cx("flowbar-orb", recording && "is-live")}
+            onClick={toggleDictate}
+            aria-label="Waveform"
+            disabled={busy}
+          >
+            <WaveBars active={recording} />
+          </button>
+          <button
+            type="button"
+            className="flowbar-orb"
+            onClick={() => openMain("dictation")}
+            aria-label="Notes"
+          >
+            <File06 className="size-[18px]" strokeWidth={1.75} />
+          </button>
+        </div>
       </div>
     </div>
   );
