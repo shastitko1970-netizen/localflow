@@ -18,7 +18,7 @@ use crate::settings::{known_models, AppSettings, ModelInfo};
 use crate::snippets::{load_snippets, save_snippets, Snippets};
 use crate::state::{AppState, RuntimeStatus, SessionMode, SharedState};
 use std::sync::Arc;
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 
 #[tauri::command]
@@ -138,6 +138,58 @@ fn data_paths() -> serde_json::Value {
         "dbPath": paths::db_path(),
         "mcpHint": format!("http://127.0.0.1:{}/mcp", load_port()),
     })
+}
+
+#[tauri::command]
+fn show_flowbar(app: AppHandle) -> AppResult<()> {
+    if let Some(win) = app.get_webview_window("flowbar") {
+        win.show()?;
+        win.set_always_on_top(true)?;
+    } else {
+        spawn_flowbar(&app)?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn hide_flowbar(app: AppHandle) -> AppResult<()> {
+    if let Some(win) = app.get_webview_window("flowbar") {
+        win.hide()?;
+    }
+    Ok(())
+}
+
+fn spawn_flowbar(app: &AppHandle) -> AppResult<()> {
+    if app.get_webview_window("flowbar").is_some() {
+        return Ok(());
+    }
+
+    let window = WebviewWindowBuilder::new(app, "flowbar", WebviewUrl::App("index.html#flowbar".into()))
+        .title("LocalFlow Bar")
+        .inner_size(260.0, 140.0)
+        .resizable(false)
+        .maximizable(false)
+        .minimizable(false)
+        .closable(false)
+        .decorations(false)
+        .transparent(true)
+        .always_on_top(true)
+        .skip_taskbar(true)
+        .visible(true)
+        .focused(false)
+        .build()?;
+
+    if let Ok(Some(monitor)) = window.current_monitor() {
+        let scale = monitor.scale_factor();
+        let size = monitor.size();
+        let win_w = (260.0 * scale) as i32;
+        let win_h = (140.0 * scale) as i32;
+        let x = monitor.position().x + (size.width as i32 - win_w) / 2;
+        let y = monitor.position().y + size.height as i32 - win_h - (48.0 * scale) as i32;
+        let _ = window.set_position(tauri::PhysicalPosition::new(x, y));
+    }
+
+    Ok(())
 }
 
 fn load_port() -> u16 {
@@ -317,7 +369,9 @@ pub fn run() {
             stop_meeting,
             list_meetings,
             paste_last,
-            data_paths
+            data_paths,
+            show_flowbar,
+            hide_flowbar
         ])
         .setup(move |app| {
             #[cfg(desktop)]
@@ -326,6 +380,9 @@ pub fn run() {
             let handle = app.handle().clone();
             if let Err(e) = register_shortcuts(&handle, shared.clone()) {
                 tracing::warn!("shortcut registration failed: {e}");
+            }
+            if let Err(e) = spawn_flowbar(&handle) {
+                tracing::warn!("flowbar spawn failed: {e}");
             }
             Ok(())
         })

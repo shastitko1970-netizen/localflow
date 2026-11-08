@@ -80,6 +80,11 @@ async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>): Promi
       return "C:\\Users\\demo\\.localflow\\models\\ggml-base.bin" as T;
     case "get_status":
       return { meetingActive: false } as T;
+    case "start_dictation":
+    case "stop_dictation":
+    case "show_flowbar":
+    case "hide_flowbar":
+      return undefined as T;
     default:
       console.warn("[preview mock] unhandled invoke", cmd, args);
       return undefined as T;

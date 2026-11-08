@@ -12,6 +12,8 @@ pub enum AppError {
     Json(#[from] serde_json::Error),
     #[error(transparent)]
     Anyhow(#[from] anyhow::Error),
+    #[error(transparent)]
+    Tauri(#[from] tauri::Error),
 }
 
 impl Serialize for AppError {

@@ -1,17 +1,22 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ComponentType, type SVGProps } from "react";
 import {
-  Clock,
-  Settings01,
-  BookOpen01,
-  Zap,
   Microphone01,
-  Code01,
+  Recording02,
+  BarChart01,
+  BookOpen01,
+  Scissors01,
+  Type01,
+  MagicWand01,
+  MessageTextCircle01,
+  Settings01,
+  HelpCircle,
   Moon01,
   Sun,
   SearchLg,
   Plus,
   RefreshCcw01,
   Download01,
+  XClose,
 } from "@untitledui/icons";
 import { Button } from "@/components/base/buttons/button";
 import { Input } from "@/components/base/input/input";
@@ -21,7 +26,16 @@ import { cx } from "@/utils/cx";
 import { useTheme } from "@/providers/theme-provider";
 import { checkUpdate, invoke, listen, relaunchApp } from "@/lib/tauri";
 
-type Tab = "history" | "settings" | "dictionary" | "snippets" | "meetings" | "mcp";
+type Tab =
+  | "dictation"
+  | "notetaker"
+  | "insights"
+  | "dictionary"
+  | "snippets"
+  | "style"
+  | "transforms"
+  | "scratchpad"
+  | "mcp";
 
 type AppSettings = {
   modelId: string;
@@ -61,19 +75,39 @@ type ModelInfo = { id: string; label: string; url: string; sizeHintMb: number };
 type DictEntry = { from: string; to: string };
 type Snippet = { trigger: string; expansion: string };
 type UpdateInfo = { version: string; body?: string | null };
+type IconType = ComponentType<SVGProps<SVGSVGElement>>;
 
-const NAV: { id: Tab; label: string; icon: typeof Clock }[] = [
-  { id: "history", label: "History", icon: Clock },
-  { id: "settings", label: "Settings", icon: Settings01 },
+const NAV: { id: Tab; label: string; icon: IconType }[] = [
+  { id: "dictation", label: "Dictation", icon: Microphone01 },
+  { id: "notetaker", label: "Notetaker", icon: Recording02 },
+  { id: "insights", label: "Insights", icon: BarChart01 },
   { id: "dictionary", label: "Dictionary", icon: BookOpen01 },
-  { id: "snippets", label: "Snippets", icon: Zap },
-  { id: "meetings", label: "Notetaker", icon: Microphone01 },
-  { id: "mcp", label: "MCP", icon: Code01 },
+  { id: "snippets", label: "Snippets", icon: Scissors01 },
+  { id: "style", label: "Style", icon: Type01 },
+  { id: "transforms", label: "Transforms", icon: MagicWand01 },
+  { id: "scratchpad", label: "Scratchpad", icon: MessageTextCircle01 },
 ];
+
+function groupByDate(items: Dictation[]) {
+  const map = new Map<string, Dictation[]>();
+  for (const item of items) {
+    const key = new Date(item.createdAt).toLocaleDateString(undefined, {
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    });
+    const list = map.get(key) ?? [];
+    list.push(item);
+    map.set(key, list);
+  }
+  return [...map.entries()];
+}
 
 export default function App() {
   const { theme, toggleTheme } = useTheme();
-  const [tab, setTab] = useState<Tab>("history");
+  const [tab, setTab] = useState<Tab>("dictation");
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [recording, setRecording] = useState(false);
   const [statusMsg, setStatusMsg] = useState("Ready");
   const [settings, setSettings] = useState<AppSettings | null>(null);
@@ -88,6 +122,7 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
   const [updating, setUpdating] = useState(false);
+  const [flowBarOn, setFlowBarOn] = useState(true);
 
   const refresh = useCallback(async () => {
     const [s, h, m, ms, mic, d, sn, paths] = await Promise.all([
@@ -125,6 +160,12 @@ export default function App() {
       listen<boolean>("localflow://handsfree", (e) =>
         setStatusMsg(e.payload ? "Hands-free on" : "Hands-free off"),
       ),
+      listen<string>("localflow://navigate", (e) => {
+        const next = e.payload as Tab | "history" | "settings";
+        if (next === "history") setTab("dictation");
+        else if (next === "settings") setSettingsOpen(true);
+        else setTab(next);
+      }),
     ];
     return () => {
       unsubs.forEach((p) => p.then((u) => u()));
@@ -140,7 +181,7 @@ export default function App() {
           setUpdateInfo({ version: update.version, body: update.body });
         }
       } catch {
-        // ignore offline / unsigned builds
+        // ignore
       }
     })();
     return () => {
@@ -148,9 +189,14 @@ export default function App() {
     };
   }, []);
 
+  const grouped = useMemo(() => groupByDate(history), [history]);
+  const wordCount = useMemo(
+    () => history.reduce((n, d) => n + d.text.trim().split(/\s+/).filter(Boolean).length, 0),
+    [history],
+  );
+
   async function installUpdate() {
     setUpdating(true);
-    setStatusMsg("Downloading update…");
     try {
       const update = await checkUpdate();
       if (!update) {
@@ -159,7 +205,6 @@ export default function App() {
         return;
       }
       await update.downloadAndInstall();
-      setStatusMsg("Restarting…");
       await relaunchApp();
     } catch (e) {
       setStatusMsg(String(e));
@@ -177,7 +222,6 @@ export default function App() {
   async function downloadModel() {
     if (!settings) return;
     setBusy(true);
-    setStatusMsg(`Downloading ${settings.modelId}…`);
     try {
       const path = await invoke<string>("ensure_model", { modelId: settings.modelId });
       setStatusMsg(`Model ready: ${path}`);
@@ -193,8 +237,7 @@ export default function App() {
       await refresh();
       return;
     }
-    const rows = await invoke<Dictation[]>("search_history", { query, limit: 100 });
-    setHistory(rows);
+    setHistory(await invoke<Dictation[]>("search_history", { query, limit: 100 }));
   }
 
   async function toggleMeeting() {
@@ -217,142 +260,370 @@ export default function App() {
     }
   }
 
-  return (
-    <div className="flex h-full min-h-screen bg-secondary text-primary">
-      <aside className="flex w-64 shrink-0 flex-col border-r border-secondary bg-primary">
-        <div className="flex items-center gap-3 px-5 pt-5 pb-4">
-          <div className="flex size-10 items-center justify-center rounded-xl bg-brand-solid text-white shadow-xs">
-            <Microphone01 className="size-5" />
-          </div>
-          <div className="min-w-0">
-            <div className="truncate text-md font-semibold text-primary">LocalFlow</div>
-            <div className="truncate text-xs text-tertiary">offline dictation · v{__APP_VERSION__}</div>
-          </div>
-        </div>
+  async function setFlowBarVisible(on: boolean) {
+    setFlowBarOn(on);
+    try {
+      await invoke(on ? "show_flowbar" : "hide_flowbar");
+    } catch {
+      // preview mock
+    }
+  }
 
-        <nav className="flex flex-1 flex-col gap-0.5 px-3">
+  return (
+    <div className="flex h-screen overflow-hidden bg-[#0a0a0a] text-white">
+      {/* Icon rail — Wispr style */}
+      <aside className="flex w-[68px] shrink-0 flex-col items-center gap-1 border-r border-white/5 py-4">
+        <div className="mb-3 flex size-9 items-center justify-center rounded-xl bg-white/10">
+          <span className="flex h-4 items-end gap-0.5">
+            <span className="w-1 rounded-sm bg-white/90 h-2" />
+            <span className="w-1 rounded-sm bg-white/90 h-3.5" />
+            <span className="w-1 rounded-sm bg-white/90 h-2.5" />
+          </span>
+        </div>
+        <nav className="flex flex-1 flex-col items-center gap-1">
           {NAV.map(({ id, label, icon: Icon }) => {
             const active = tab === id;
             return (
               <button
                 key={id}
                 type="button"
+                title={label}
                 onClick={() => setTab(id)}
                 className={cx(
-                  "flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm font-semibold outline-focus-ring transition",
-                  active
-                    ? "bg-active text-secondary_hover ring-1 ring-secondary ring-inset"
-                    : "text-tertiary hover:bg-primary_hover hover:text-secondary_hover",
+                  "flex size-11 items-center justify-center rounded-xl transition",
+                  active ? "bg-white/10 text-white" : "text-white/45 hover:bg-white/5 hover:text-white/80",
                 )}
               >
-                <Icon className={cx("size-5", active ? "text-fg-brand-primary" : "text-fg-quaternary")} />
-                {label}
+                <Icon className="size-5" />
               </button>
             );
           })}
         </nav>
-
-        <div className="mt-auto space-y-3 border-t border-secondary px-4 py-4">
-          <div className="flex items-center justify-between gap-2">
-            <span
-              className={cx(
-                "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ring-1 ring-inset",
-                recording
-                  ? "bg-error-primary text-error-primary ring-error_subtle"
-                  : "bg-success-primary text-success-primary ring-success",
-              )}
-            >
-              <span className={cx("size-1.5 rounded-full", recording ? "bg-fg-error-secondary" : "bg-fg-success-secondary")} />
-              {recording ? "REC" : "IDLE"}
-            </span>
-            <Button
-              size="sm"
-              color="tertiary"
-              iconLeading={theme === "dark" ? Sun : Moon01}
-              aria-label="Toggle theme"
-              onPress={toggleTheme}
-            />
-          </div>
-          <p className="truncate text-xs text-tertiary">{statusMsg}</p>
+        <div className="mt-auto flex flex-col items-center gap-1">
+          <button
+            type="button"
+            title="Settings"
+            onClick={() => setSettingsOpen(true)}
+            className="flex size-11 items-center justify-center rounded-xl text-white/45 transition hover:bg-white/5 hover:text-white/80"
+          >
+            <Settings01 className="size-5" />
+          </button>
+          <button
+            type="button"
+            title="MCP"
+            onClick={() => setTab("mcp")}
+            className={cx(
+              "flex size-11 items-center justify-center rounded-xl transition",
+              tab === "mcp" ? "bg-white/10 text-white" : "text-white/45 hover:bg-white/5 hover:text-white/80",
+            )}
+          >
+            <HelpCircle className="size-5" />
+          </button>
         </div>
       </aside>
 
-      <main className="flex min-w-0 flex-1 flex-col overflow-auto">
-        <div className="mx-auto w-full max-w-5xl flex-1 px-6 py-6 lg:px-8">
-          {updateInfo && (
-            <div className="mb-5 flex items-center justify-between gap-4 rounded-xl bg-brand-primary px-4 py-3 ring-1 ring-brand ring-inset">
-              <div>
-                <p className="text-sm font-semibold text-secondary">Update {updateInfo.version}</p>
-                <p className="text-sm text-tertiary">{updateInfo.body || "A newer LocalFlow build is ready."}</p>
+      {/* Main rounded pane */}
+      <div className="relative flex min-w-0 flex-1 flex-col p-3">
+        <div className="flex min-h-0 flex-1 overflow-hidden rounded-[22px] border border-white/8 bg-[#111111]">
+          <div className="flex min-w-0 flex-1 flex-col">
+            <header className="flex items-center justify-between gap-3 border-b border-white/6 px-5 py-3">
+              <div className="flex items-center gap-3">
+                <h1 className="text-xl font-semibold tracking-tight capitalize">
+                  {tab === "mcp" ? "MCP" : NAV.find((n) => n.id === tab)?.label}
+                </h1>
+                {(tab === "transforms" || tab === "scratchpad" || tab === "style") && (
+                  <span className="rounded-full bg-violet-500/20 px-2 py-0.5 text-[11px] font-medium text-violet-300">
+                    Beta
+                  </span>
+                )}
+                <span
+                  className={cx(
+                    "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-medium",
+                    recording ? "bg-red-500/15 text-red-300" : "bg-emerald-500/15 text-emerald-300",
+                  )}
+                >
+                  <span className={cx("size-1.5 rounded-full", recording ? "bg-red-400" : "bg-emerald-400")} />
+                  {recording ? "REC" : "IDLE"}
+                </span>
               </div>
-              <Button size="sm" isDisabled={updating} onPress={installUpdate}>
-                {updating ? "Installing…" : "Install & restart"}
-              </Button>
-            </div>
-          )}
+              <div className="flex items-center gap-2">
+                <span className="hidden text-xs text-white/40 sm:inline">{statusMsg}</span>
+                <button
+                  type="button"
+                  onClick={toggleTheme}
+                  className="flex size-9 items-center justify-center rounded-full text-white/50 hover:bg-white/5 hover:text-white"
+                  aria-label="Toggle theme"
+                >
+                  {theme === "dark" ? <Sun className="size-4" /> : <Moon01 className="size-4" />}
+                </button>
+              </div>
+            </header>
 
-          {tab === "history" && (
-            <section className="space-y-5">
-              <header className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-                <div>
-                  <h1 className="text-display-xs font-semibold text-primary">Dictation history</h1>
-                  <p className="mt-1 max-w-xl text-md text-tertiary">
-                    Hold <kbd className="rounded-md bg-primary px-1.5 py-0.5 text-sm font-medium text-secondary ring-1 ring-secondary ring-inset">{settings?.pushToTalk ?? "Ctrl+Win+Space"}</kbd> to speak into any app.
-                  </p>
-                </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <Input
-                    value={query}
-                    onChange={setQuery}
-                    placeholder="Search transcripts…"
-                    icon={SearchLg}
-                    className="min-w-56"
-                    onKeyDown={(e) => e.key === "Enter" && doSearch()}
-                  />
-                  <Button onPress={doSearch}>Search</Button>
-                  <Button color="secondary" iconLeading={RefreshCcw01} onPress={() => refresh()}>
-                    Refresh
+            <div className="min-h-0 flex-1 overflow-auto">
+              {updateInfo && (
+                <div className="mx-5 mt-4 flex items-center justify-between gap-3 rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
+                  <div>
+                    <p className="text-sm font-medium">Update {updateInfo.version}</p>
+                    <p className="text-xs text-white/50">{updateInfo.body || "Newer LocalFlow build ready."}</p>
+                  </div>
+                  <Button size="sm" isDisabled={updating} onPress={installUpdate}>
+                    {updating ? "Installing…" : "Install"}
                   </Button>
                 </div>
-              </header>
+              )}
 
-              <div className="space-y-3">
-                {history.map((d) => (
-                  <article key={d.id} className="rounded-xl bg-primary p-4 shadow-xs ring-1 ring-secondary ring-inset">
-                    <div className="flex items-center justify-between gap-3">
-                      <span className="rounded-md bg-brand-primary px-2 py-0.5 text-xs font-medium text-brand-secondary ring-1 ring-brand ring-inset">
-                        {d.kind}
-                      </span>
-                      <span className="text-xs text-tertiary">
-                        {new Date(d.createdAt).toLocaleString()} · {d.durationMs}ms
-                      </span>
+              {tab === "dictation" && (
+                <div className="grid min-h-full gap-0 lg:grid-cols-[1fr_280px]">
+                  <section className="space-y-5 p-5">
+                    <div className="overflow-hidden rounded-2xl border border-white/8 bg-gradient-to-br from-orange-500/20 via-zinc-900 to-zinc-950 p-6">
+                      <h2 className="font-serif text-2xl text-white">Make LocalFlow sound like you</h2>
+                      <p className="mt-2 max-w-md text-sm text-white/60">
+                        Hold <kbd className="rounded bg-white/10 px-1.5 py-0.5 text-white/80">{settings?.pushToTalk ?? "Ctrl+Win+Space"}</kbd> or use the floating Flow Bar pill.
+                      </p>
+                      <div className="mt-4 flex flex-wrap gap-2">
+                        <Button size="sm" color="secondary" onPress={() => setFlowBarVisible(!flowBarOn)}>
+                          {flowBarOn ? "Hide Flow Bar" : "Show Flow Bar"}
+                        </Button>
+                        <Button size="sm" color="tertiary" onPress={() => setSettingsOpen(true)}>
+                          Settings
+                        </Button>
+                      </div>
                     </div>
-                    <p className="mt-3 whitespace-pre-wrap text-md text-secondary">{d.text}</p>
-                  </article>
-                ))}
-                {!history.length && (
-                  <div className="rounded-xl bg-primary px-6 py-12 text-center shadow-xs ring-1 ring-secondary ring-inset">
-                    <p className="text-md font-medium text-secondary">No dictations yet</p>
-                    <p className="mt-1 text-sm text-tertiary">Press the hotkey and talk.</p>
-                  </div>
-                )}
-              </div>
-            </section>
-          )}
 
-          {tab === "settings" && settings && (
-            <section className="space-y-5">
-              <header className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-                <div>
-                  <h1 className="text-display-xs font-semibold text-primary">Settings</h1>
-                  <p className="mt-1 text-md text-tertiary">Models, mic, shortcuts, and local MCP.</p>
+                    <div className="flex items-center gap-2">
+                      <Input
+                        value={query}
+                        onChange={setQuery}
+                        placeholder="Search transcripts…"
+                        icon={SearchLg}
+                        className="min-w-0 flex-1"
+                        onKeyDown={(e) => e.key === "Enter" && doSearch()}
+                      />
+                      <Button color="secondary" iconLeading={RefreshCcw01} onPress={() => refresh()} />
+                    </div>
+
+                    <div className="space-y-6">
+                      {grouped.map(([date, items]) => (
+                        <div key={date}>
+                          <p className="mb-3 text-[11px] font-semibold tracking-[0.14em] text-white/35 uppercase">
+                            {date}
+                          </p>
+                          <div className="space-y-3">
+                            {items.map((d) => (
+                              <article
+                                key={d.id}
+                                className="rounded-2xl border border-white/8 bg-white/[0.03] px-4 py-3.5"
+                              >
+                                <div className="mb-2 flex items-center justify-between gap-2 text-[11px] text-white/35">
+                                  <span className="rounded-md bg-white/5 px-2 py-0.5 capitalize">{d.kind}</span>
+                                  <span>
+                                    {new Date(d.createdAt).toLocaleTimeString([], {
+                                      hour: "numeric",
+                                      minute: "2-digit",
+                                    })}{" "}
+                                    · {d.durationMs}ms
+                                  </span>
+                                </div>
+                                <p className="whitespace-pre-wrap text-[15px] leading-relaxed text-white/90">
+                                  {d.text}
+                                </p>
+                              </article>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                      {!history.length && (
+                        <p className="py-16 text-center text-sm text-white/40">
+                          No dictations yet — press the hotkey or Flow Bar.
+                        </p>
+                      )}
+                    </div>
+                  </section>
+
+                  <aside className="hidden space-y-3 border-l border-white/6 p-4 lg:block">
+                    <div className="rounded-2xl border border-white/8 bg-white/[0.03] p-4">
+                      <p className="font-serif text-3xl text-white">{wordCount.toLocaleString()}</p>
+                      <p className="mt-1 text-xs text-white/45">total words</p>
+                      <div className="mt-4 grid grid-cols-2 gap-3 text-xs text-white/50">
+                        <div>
+                          <p className="text-lg text-white/90">—</p>
+                          <p>wpm</p>
+                        </div>
+                        <div>
+                          <p className="text-lg text-white/90">0</p>
+                          <p>day streak</p>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="rounded-2xl border border-white/8 bg-white/[0.03] p-4">
+                      <p className="text-sm font-medium">Flow Bar</p>
+                      <p className="mt-1 text-xs text-white/45">
+                        Floating pill stays on top while you work in other apps.
+                      </p>
+                      <div className="mt-3">
+                        <Button size="sm" color="secondary" onPress={() => setFlowBarVisible(!flowBarOn)}>
+                          {flowBarOn ? "Hide pill" : "Show pill"}
+                        </Button>
+                      </div>
+                    </div>
+                  </aside>
                 </div>
-                <Button color="secondary" isDisabled={updating} onPress={installUpdate}>
-                  Check for updates
-                </Button>
-              </header>
+              )}
 
-              <div className="space-y-5 rounded-xl bg-primary p-5 shadow-xs ring-1 ring-secondary ring-inset sm:p-6">
+              {tab === "notetaker" && (
+                <section className="space-y-5 p-5">
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-sm text-white/50">Record, transcribe locally, keep notes offline.</p>
+                    <Button isDisabled={busy} onPress={toggleMeeting}>
+                      Start / stop meeting
+                    </Button>
+                  </div>
+                  <div className="space-y-3">
+                    {meetings.map((m) => (
+                      <article key={m.id} className="rounded-2xl border border-white/8 bg-white/[0.03] p-4">
+                        <div className="flex items-center justify-between gap-2">
+                          <h2 className="font-medium">{m.title}</h2>
+                          <span className="text-xs text-white/40">
+                            {new Date(m.createdAt).toLocaleString()}
+                          </span>
+                        </div>
+                        <pre className="mt-3 whitespace-pre-wrap rounded-xl bg-black/40 p-3 text-sm text-white/70">
+                          {m.summary}
+                        </pre>
+                      </article>
+                    ))}
+                    {!meetings.length && (
+                      <p className="py-16 text-center text-sm text-white/40">No meetings yet.</p>
+                    )}
+                  </div>
+                </section>
+              )}
+
+              {tab === "insights" && (
+                <ComingSoon
+                  title="Your usage"
+                  body="Words, WPM, streak and desktop usage charts — next after the Flow Bar lands solid."
+                />
+              )}
+
+              {tab === "dictionary" && (
+                <ListEditor
+                  title="Dictionary"
+                  subtitle="Correct a spelling once — personal terms stay right in dictations and notes."
+                  rows={dict.map((e) => ({ left: e.from, right: e.to }))}
+                  leftPh="from"
+                  rightPh="to"
+                  onChange={(rows) => setDict(rows.map((r) => ({ from: r.left, to: r.right })))}
+                  onSave={async () => {
+                    await invoke("set_dictionary", { dict: { words: dict } });
+                    setStatusMsg("Dictionary saved");
+                  }}
+                />
+              )}
+
+              {tab === "snippets" && (
+                <ListEditor
+                  title="Snippets"
+                  subtitle="Save text you type often, then drop it in with a short trigger."
+                  rows={snips.map((s) => ({ left: s.trigger, right: s.expansion }))}
+                  leftPh="trigger"
+                  rightPh="expansion"
+                  onChange={(rows) => setSnips(rows.map((r) => ({ trigger: r.left, expansion: r.right })))}
+                  onSave={async () => {
+                    await invoke("set_snippets", { snips: { items: snips } });
+                    setStatusMsg("Snippets saved");
+                  }}
+                />
+              )}
+
+              {tab === "style" && settings && (
+                <section className="space-y-5 p-5">
+                  <div className="overflow-hidden rounded-2xl border border-white/8 bg-gradient-to-r from-violet-900/40 to-zinc-900 p-6">
+                    <h2 className="font-serif text-2xl">Auto cleanup applies to all dictations</h2>
+                    <p className="mt-2 text-sm text-white/55">Original audio/transcript stays local. Pick a cleanup level.</p>
+                  </div>
+                  <div className="grid gap-3 sm:grid-cols-3">
+                    {(["off", "medium", "high"] as const).map((level) => {
+                      const active = settings.cleanupLevel === level;
+                      return (
+                        <button
+                          key={level}
+                          type="button"
+                          onClick={() => setSettings({ ...settings, cleanupLevel: level, autoCleanup: level !== "off" })}
+                          className={cx(
+                            "rounded-2xl border p-4 text-left transition",
+                            active ? "border-white/40 bg-white/8" : "border-white/8 bg-white/[0.03] hover:border-white/20",
+                          )}
+                        >
+                          <p className="font-serif text-xl capitalize">{level === "off" ? "None" : level}</p>
+                          <p className="mt-2 text-xs text-white/45">
+                            {level === "off" && "Raw transcript, no cleanup."}
+                            {level === "medium" && "Filler words and light grammar."}
+                            {level === "high" && "Stronger polish and structure."}
+                          </p>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <Button onPress={() => saveSettings(settings)}>Save style</Button>
+                </section>
+              )}
+
+              {tab === "transforms" && (
+                <ComingSoon
+                  title="Transforms"
+                  body="Polish / prompt-engineer style rewrites after dictation — local prompts next."
+                />
+              )}
+
+              {tab === "scratchpad" && (
+                <ComingSoon
+                  title="Scratchpad"
+                  body="Quick notes you can come back to — wired after history polish."
+                />
+              )}
+
+              {tab === "mcp" && (
+                <section className="space-y-4 p-5">
+                  <p className="max-w-2xl text-sm text-white/55">
+                    Sync notes with AI apps on localhost. LocalFlow MCP does not send dictations to the cloud.
+                  </p>
+                  <pre className="overflow-auto rounded-2xl border border-white/8 bg-black/40 p-5 font-mono text-xs leading-relaxed text-white/75 whitespace-pre-wrap">{`Endpoint: ${mcpHint || "http://127.0.0.1:17832/mcp"}
+
+{
+  "mcpServers": {
+    "localflow": {
+      "url": "${mcpHint || "http://127.0.0.1:17832/mcp"}"
+    }
+  }
+}`}</pre>
+                </section>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {settingsOpen && settings && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/60 p-6 backdrop-blur-sm">
+          <div className="flex max-h-[90vh] w-full max-w-3xl overflow-hidden rounded-2xl border border-white/10 bg-[#141414] shadow-2xl">
+            <div className="w-48 shrink-0 border-r border-white/8 p-4">
+              <p className="mb-3 text-[10px] font-semibold tracking-wider text-white/35 uppercase">Settings</p>
+              <p className="rounded-lg bg-white/8 px-3 py-2 text-sm">General</p>
+              <p className="mt-auto pt-8 text-[11px] text-white/30">LocalFlow v{__APP_VERSION__}</p>
+            </div>
+            <div className="min-w-0 flex-1 overflow-auto p-5">
+              <div className="mb-4 flex items-center justify-between">
+                <h2 className="font-serif text-2xl">General</h2>
+                <button
+                  type="button"
+                  onClick={() => setSettingsOpen(false)}
+                  className="rounded-full p-2 text-white/40 hover:bg-white/5 hover:text-white"
+                >
+                  <XClose className="size-5" />
+                </button>
+              </div>
+              <div className="space-y-4">
                 <NativeSelect
                   label="Whisper model"
                   value={settings.modelId}
@@ -362,22 +633,17 @@ export default function App() {
                 <Button iconLeading={Download01} isDisabled={busy} onPress={downloadModel}>
                   Download / load model
                 </Button>
-
-                <div className="grid gap-4 sm:grid-cols-2">
+                <div className="grid gap-3 sm:grid-cols-2">
                   <Input
                     label="Language"
                     value={settings.language}
                     onChange={(v) => setSettings({ ...settings, language: v })}
-                    placeholder="auto / en / ru"
                   />
                   <NativeSelect
                     label="Microphone"
                     value={settings.inputDevice ?? ""}
                     onChange={(e) =>
-                      setSettings({
-                        ...settings,
-                        inputDevice: e.target.value || null,
-                      })
+                      setSettings({ ...settings, inputDevice: e.target.value || null })
                     }
                     options={[
                       { label: "System default", value: "" },
@@ -394,217 +660,125 @@ export default function App() {
                     value={settings.handsFree}
                     onChange={(v) => setSettings({ ...settings, handsFree: v })}
                   />
-                  <Input
-                    label="Command mode"
-                    value={settings.commandMode}
-                    onChange={(v) => setSettings({ ...settings, commandMode: v })}
-                  />
-                  <NativeSelect
-                    label="Cleanup level"
-                    value={settings.cleanupLevel}
-                    onChange={(e) => setSettings({ ...settings, cleanupLevel: e.target.value })}
-                    options={[
-                      { label: "Off", value: "off" },
-                      { label: "Medium", value: "medium" },
-                      { label: "High", value: "high" },
-                    ]}
-                  />
                 </div>
-
-                <div className="space-y-3">
-                  <Checkbox
-                    isSelected={settings.autoPaste}
-                    onChange={(v) => setSettings({ ...settings, autoPaste: v })}
-                    label="Auto-paste into focused app"
-                  />
-                  <Checkbox
-                    isSelected={settings.autoCleanup}
-                    onChange={(v) => setSettings({ ...settings, autoCleanup: v })}
-                    label="Auto cleanup fillers"
-                  />
-                  <Checkbox
-                    isSelected={settings.mcpEnabled}
-                    onChange={(v) => setSettings({ ...settings, mcpEnabled: v })}
-                    label="Enable local MCP HTTP server"
-                  />
-                </div>
-
+                <Checkbox
+                  isSelected={settings.autoPaste}
+                  onChange={(v) => setSettings({ ...settings, autoPaste: v })}
+                  label="Auto-paste into focused app"
+                />
+                <Checkbox
+                  isSelected={settings.mcpEnabled}
+                  onChange={(v) => setSettings({ ...settings, mcpEnabled: v })}
+                  label="Enable local MCP HTTP server"
+                />
                 <Input
                   label="MCP port"
                   type="number"
                   value={String(settings.mcpPort)}
-                  onChange={(v) =>
-                    setSettings({ ...settings, mcpPort: Number(v) || 17832 })
-                  }
+                  onChange={(v) => setSettings({ ...settings, mcpPort: Number(v) || 17832 })}
                 />
-
-                <Button onPress={() => saveSettings(settings)}>Save settings</Button>
-              </div>
-            </section>
-          )}
-
-          {tab === "dictionary" && (
-            <section className="space-y-5">
-              <header>
-                <h1 className="text-display-xs font-semibold text-primary">Dictionary</h1>
-                <p className="mt-1 text-md text-tertiary">Replace misheard words with your own terms.</p>
-              </header>
-              <div className="space-y-3 rounded-xl bg-primary p-5 shadow-xs ring-1 ring-secondary ring-inset">
-                {dict.map((e, i) => (
-                  <div key={i} className="grid gap-2 sm:grid-cols-[1fr_1fr_auto]">
-                    <Input
-                      value={e.from}
-                      placeholder="from"
-                      onChange={(v) => {
-                        const next = [...dict];
-                        next[i] = { ...e, from: v };
-                        setDict(next);
-                      }}
-                    />
-                    <Input
-                      value={e.to}
-                      placeholder="to"
-                      onChange={(v) => {
-                        const next = [...dict];
-                        next[i] = { ...e, to: v };
-                        setDict(next);
-                      }}
-                    />
-                    <Button color="secondary" onPress={() => setDict(dict.filter((_, idx) => idx !== i))}>
-                      Remove
-                    </Button>
-                  </div>
-                ))}
-                <div className="flex flex-wrap gap-2 pt-2">
-                  <Button color="secondary" iconLeading={Plus} onPress={() => setDict([...dict, { from: "", to: "" }])}>
-                    Add word
-                  </Button>
-                  <Button
-                    onPress={async () => {
-                      await invoke("set_dictionary", { dict: { words: dict } });
-                      setStatusMsg("Dictionary saved");
-                    }}
-                  >
-                    Save
-                  </Button>
-                </div>
-              </div>
-            </section>
-          )}
-
-          {tab === "snippets" && (
-            <section className="space-y-5">
-              <header>
-                <h1 className="text-display-xs font-semibold text-primary">Snippets</h1>
-                <p className="mt-1 text-md text-tertiary">Expand short triggers into longer phrases.</p>
-              </header>
-              <div className="space-y-3 rounded-xl bg-primary p-5 shadow-xs ring-1 ring-secondary ring-inset">
-                {snips.map((s, i) => (
-                  <div key={i} className="grid gap-2 sm:grid-cols-[1fr_1fr_auto]">
-                    <Input
-                      value={s.trigger}
-                      placeholder="trigger"
-                      onChange={(v) => {
-                        const next = [...snips];
-                        next[i] = { ...s, trigger: v };
-                        setSnips(next);
-                      }}
-                    />
-                    <Input
-                      value={s.expansion}
-                      placeholder="expansion"
-                      onChange={(v) => {
-                        const next = [...snips];
-                        next[i] = { ...s, expansion: v };
-                        setSnips(next);
-                      }}
-                    />
-                    <Button color="secondary" onPress={() => setSnips(snips.filter((_, idx) => idx !== i))}>
-                      Remove
-                    </Button>
-                  </div>
-                ))}
                 <div className="flex flex-wrap gap-2 pt-2">
                   <Button
                     color="secondary"
-                    iconLeading={Plus}
-                    onPress={() => setSnips([...snips, { trigger: "", expansion: "" }])}
-                  >
-                    Add snippet
-                  </Button>
-                  <Button
-                    onPress={async () => {
-                      await invoke("set_snippets", { snips: { items: snips } });
-                      setStatusMsg("Snippets saved");
+                    onPress={() => {
+                      saveSettings(settings);
+                      setSettingsOpen(false);
                     }}
                   >
                     Save
                   </Button>
+                  <Button color="tertiary" isDisabled={updating} onPress={installUpdate}>
+                    Check for updates
+                  </Button>
                 </div>
               </div>
-            </section>
-          )}
-
-          {tab === "meetings" && (
-            <section className="space-y-5">
-              <header className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-                <div>
-                  <h1 className="text-display-xs font-semibold text-primary">Notetaker</h1>
-                  <p className="mt-1 text-md text-tertiary">Record, transcribe locally, keep summaries offline.</p>
-                </div>
-                <Button isDisabled={busy} onPress={toggleMeeting}>
-                  Start / stop meeting
-                </Button>
-              </header>
-              <div className="space-y-3">
-                {meetings.map((m) => (
-                  <article key={m.id} className="rounded-xl bg-primary p-4 shadow-xs ring-1 ring-secondary ring-inset">
-                    <div className="flex items-center justify-between gap-3">
-                      <h2 className="text-md font-semibold text-primary">{m.title}</h2>
-                      <span className="text-xs text-tertiary">{new Date(m.createdAt).toLocaleString()}</span>
-                    </div>
-                    <pre className="mt-3 overflow-auto rounded-lg bg-secondary p-3 text-sm text-secondary whitespace-pre-wrap">
-                      {m.summary}
-                    </pre>
-                    <details className="mt-2">
-                      <summary className="cursor-pointer text-sm text-tertiary">Transcript</summary>
-                      <p className="mt-2 text-sm text-secondary">{m.transcript || "(empty)"}</p>
-                    </details>
-                  </article>
-                ))}
-                {!meetings.length && (
-                  <div className="rounded-xl bg-primary px-6 py-12 text-center shadow-xs ring-1 ring-secondary ring-inset">
-                    <p className="text-md font-medium text-secondary">No meetings yet</p>
-                  </div>
-                )}
-              </div>
-            </section>
-          )}
-
-          {tab === "mcp" && (
-            <section className="space-y-5">
-              <header>
-                <h1 className="text-display-xs font-semibold text-primary">MCP for AI agents</h1>
-                <p className="mt-1 text-md text-tertiary">Localhost JSON-RPC while LocalFlow is running.</p>
-              </header>
-              <pre className="overflow-auto rounded-xl bg-primary p-5 text-sm text-secondary shadow-xs ring-1 ring-secondary ring-inset whitespace-pre-wrap font-mono">{`Endpoint: ${mcpHint || "http://127.0.0.1:17832/mcp"}
-
-Cursor / Claude MCP config:
-{
-  "mcpServers": {
-    "localflow": {
-      "url": "${mcpHint || "http://127.0.0.1:17832/mcp"}"
-    }
-  }
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
-Tools: list_dictations, get_dictation, search_dictations,
-get_status, list_meetings, get_meeting`}</pre>
-            </section>
-          )}
+function ComingSoon({ title, body }: { title: string; body: string }) {
+  return (
+    <section className="p-5">
+      <div className="overflow-hidden rounded-2xl border border-white/8 bg-gradient-to-br from-zinc-800 to-zinc-950 p-8">
+        <h2 className="font-serif text-3xl">{title}</h2>
+        <p className="mt-3 max-w-lg text-sm text-white/55">{body}</p>
+      </div>
+    </section>
+  );
+}
+
+function ListEditor({
+  title,
+  subtitle,
+  rows,
+  leftPh,
+  rightPh,
+  onChange,
+  onSave,
+}: {
+  title: string;
+  subtitle: string;
+  rows: { left: string; right: string }[];
+  leftPh: string;
+  rightPh: string;
+  onChange: (rows: { left: string; right: string }[]) => void;
+  onSave: () => Promise<void>;
+}) {
+  return (
+    <section className="space-y-5 p-5">
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <p className="text-sm text-white/50">{subtitle}</p>
         </div>
-      </main>
-    </div>
+        <div className="flex gap-2">
+          <Button
+            color="secondary"
+            iconLeading={Plus}
+            onPress={() => onChange([...rows, { left: "", right: "" }])}
+          >
+            Add new
+          </Button>
+          <Button onPress={onSave}>Save</Button>
+        </div>
+      </div>
+      <div className="overflow-hidden rounded-2xl border border-white/8">
+        {rows.map((row, i) => (
+          <div
+            key={i}
+            className="grid gap-2 border-b border-white/6 p-3 last:border-0 sm:grid-cols-[1fr_1fr_auto]"
+          >
+            <Input
+              value={row.left}
+              placeholder={leftPh}
+              onChange={(v) => {
+                const next = [...rows];
+                next[i] = { ...row, left: v };
+                onChange(next);
+              }}
+            />
+            <Input
+              value={row.right}
+              placeholder={rightPh}
+              onChange={(v) => {
+                const next = [...rows];
+                next[i] = { ...row, right: v };
+                onChange(next);
+              }}
+            />
+            <Button color="tertiary" onPress={() => onChange(rows.filter((_, idx) => idx !== i))}>
+              Remove
+            </Button>
+          </div>
+        ))}
+        {!rows.length && (
+          <p className="px-4 py-10 text-center text-sm text-white/40">No {title.toLowerCase()} yet.</p>
+        )}
+      </div>
+    </section>
   );
 }
 
