@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { check } from "@tauri-apps/plugin-updater";
+import { relaunch } from "@tauri-apps/plugin-process";
 import "./App.css";
 
 type Tab = "history" | "settings" | "dictionary" | "snippets" | "meetings" | "mcp";
@@ -43,6 +45,11 @@ type ModelInfo = { id: string; label: string; url: string; sizeHintMb: number };
 type DictEntry = { from: string; to: string };
 type Snippet = { trigger: string; expansion: string };
 
+type UpdateInfo = {
+  version: string;
+  body?: string | null;
+};
+
 export default function App() {
   const [tab, setTab] = useState<Tab>("history");
   const [recording, setRecording] = useState(false);
@@ -57,6 +64,8 @@ export default function App() {
   const [query, setQuery] = useState("");
   const [mcpHint, setMcpHint] = useState("");
   const [busy, setBusy] = useState(false);
+  const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
+  const [updating, setUpdating] = useState(false);
 
   const refresh = useCallback(async () => {
     const [s, h, m, ms, mic, d, sn, paths] = await Promise.all([
@@ -100,10 +109,47 @@ export default function App() {
     };
   }, [refresh]);
 
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const update = await check();
+        if (!cancelled && update) {
+          setUpdateInfo({ version: update.version, body: update.body });
+        }
+      } catch {
+        // Offline / unsigned local builds — ignore quietly.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  async function installUpdate() {
+    setUpdating(true);
+    setStatusMsg("Downloading update…");
+    try {
+      const update = await check();
+      if (!update) {
+        setStatusMsg("No update available");
+        setUpdateInfo(null);
+        return;
+      }
+      await update.downloadAndInstall();
+      setStatusMsg("Restarting…");
+      await relaunch();
+    } catch (e) {
+      setStatusMsg(String(e));
+    } finally {
+      setUpdating(false);
+    }
+  }
+
   async function saveSettings(next: AppSettings) {
     const saved = await invoke<AppSettings>("set_settings", { settings: next });
     setSettings(saved);
-    setStatusMsg("Settings saved (restart shortcuts on next launch if changed)");
+    setStatusMsg("Settings saved");
   }
 
   async function downloadModel() {
@@ -149,28 +195,29 @@ export default function App() {
     }
   }
 
+  const tabs: [Tab, string][] = [
+    ["history", "History"],
+    ["settings", "Settings"],
+    ["dictionary", "Dictionary"],
+    ["snippets", "Snippets"],
+    ["meetings", "Notetaker"],
+    ["mcp", "MCP"],
+  ];
+
   return (
     <div className="shell">
       <aside className="nav">
         <div className="brand">
-          <span className="brand-mark" />
+          <span className="brand-mark" aria-hidden />
           <div>
             <strong>LocalFlow</strong>
-            <div className="muted">v{__APP_VERSION__}</div>
+            <div className="muted small">offline dictation · v{__APP_VERSION__}</div>
           </div>
         </div>
-        {(
-          [
-            ["history", "History"],
-            ["settings", "Settings"],
-            ["dictionary", "Dictionary"],
-            ["snippets", "Snippets"],
-            ["meetings", "Notetaker"],
-            ["mcp", "MCP"],
-          ] as [Tab, string][]
-        ).map(([id, label]) => (
+        {tabs.map(([id, label]) => (
           <button
             key={id}
+            type="button"
             className={tab === id ? "nav-btn active" : "nav-btn"}
             onClick={() => setTab(id)}
           >
@@ -184,29 +231,48 @@ export default function App() {
       </aside>
 
       <main className="main">
+        {updateInfo && (
+          <div className="update-banner">
+            <div>
+              <strong>Update {updateInfo.version}</strong>
+              <div className="muted small">{updateInfo.body || "A newer LocalFlow build is ready."}</div>
+            </div>
+            <button type="button" disabled={updating} onClick={installUpdate}>
+              {updating ? "Installing…" : "Install & restart"}
+            </button>
+          </div>
+        )}
+
         {tab === "history" && (
           <section>
-            <header className="row">
-              <h1>Dictation history</h1>
-              <div className="row gap">
+            <header className="hero">
+              <div>
+                <h1>Dictation history</h1>
+                <p className="lede">
+                  Hold <kbd>{settings?.pushToTalk ?? "Ctrl+Win+Space"}</kbd> to speak into any app.
+                  Hands-free <kbd>{settings?.handsFree}</kbd> · Command{" "}
+                  <kbd>{settings?.commandMode}</kbd>
+                </p>
+              </div>
+              <div className="toolbar">
                 <input
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
-                  placeholder="Search…"
+                  placeholder="Search transcripts…"
                   onKeyDown={(e) => e.key === "Enter" && doSearch()}
                 />
-                <button onClick={doSearch}>Search</button>
-                <button onClick={() => refresh()}>Refresh</button>
+                <button type="button" onClick={doSearch}>
+                  Search
+                </button>
+                <button type="button" className="ghost" onClick={() => refresh()}>
+                  Refresh
+                </button>
               </div>
             </header>
-            <p className="hint">
-              Hold <kbd>{settings?.pushToTalk ?? "Ctrl+Win+Space"}</kbd> to dictate. Hands-free:{" "}
-              <kbd>{settings?.handsFree}</kbd>. Command: <kbd>{settings?.commandMode}</kbd>.
-            </p>
             <div className="list">
               {history.map((d) => (
                 <article key={d.id} className="card">
-                  <div className="row between">
+                  <div className="meta">
                     <span className="tag">{d.kind}</span>
                     <span className="muted small">
                       {new Date(d.createdAt).toLocaleString()} · {d.durationMs}ms
@@ -215,15 +281,25 @@ export default function App() {
                   <p>{d.text}</p>
                 </article>
               ))}
-              {!history.length && <p className="muted">No dictations yet.</p>}
+              {!history.length && <p className="empty">No dictations yet — press the hotkey and talk.</p>}
             </div>
           </section>
         )}
 
         {tab === "settings" && settings && (
           <section>
-            <h1>Settings</h1>
-            <div className="form">
+            <header className="hero">
+              <div>
+                <h1>Settings</h1>
+                <p className="lede">Models, mic, shortcuts, and local MCP — all on this machine.</p>
+              </div>
+              <div className="toolbar">
+                <button type="button" className="ghost" disabled={updating} onClick={installUpdate}>
+                  Check for updates
+                </button>
+              </div>
+            </header>
+            <div className="panel form">
               <label>
                 Whisper model
                 <select
@@ -237,57 +313,70 @@ export default function App() {
                   ))}
                 </select>
               </label>
-              <button disabled={busy} onClick={downloadModel}>
+              <button type="button" disabled={busy} onClick={downloadModel}>
                 Download / load model
               </button>
-              <label>
-                Language
-                <input
-                  value={settings.language}
-                  onChange={(e) => setSettings({ ...settings, language: e.target.value })}
-                  placeholder="auto / en / ru / …"
-                />
-              </label>
-              <label>
-                Microphone
-                <select
-                  value={settings.inputDevice ?? ""}
-                  onChange={(e) =>
-                    setSettings({
-                      ...settings,
-                      inputDevice: e.target.value || null,
-                    })
-                  }
-                >
-                  <option value="">System default</option>
-                  {mics.map((m) => (
-                    <option key={m} value={m}>
-                      {m}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                Push-to-talk
-                <input
-                  value={settings.pushToTalk}
-                  onChange={(e) => setSettings({ ...settings, pushToTalk: e.target.value })}
-                />
-              </label>
-              <label>
-                Hands-free
-                <input
-                  value={settings.handsFree}
-                  onChange={(e) => setSettings({ ...settings, handsFree: e.target.value })}
-                />
-              </label>
-              <label>
-                Command mode
-                <input
-                  value={settings.commandMode}
-                  onChange={(e) => setSettings({ ...settings, commandMode: e.target.value })}
-                />
-              </label>
+              <div className="form-grid">
+                <label>
+                  Language
+                  <input
+                    value={settings.language}
+                    onChange={(e) => setSettings({ ...settings, language: e.target.value })}
+                    placeholder="auto / en / ru / …"
+                  />
+                </label>
+                <label>
+                  Microphone
+                  <select
+                    value={settings.inputDevice ?? ""}
+                    onChange={(e) =>
+                      setSettings({
+                        ...settings,
+                        inputDevice: e.target.value || null,
+                      })
+                    }
+                  >
+                    <option value="">System default</option>
+                    {mics.map((m) => (
+                      <option key={m} value={m}>
+                        {m}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Push-to-talk
+                  <input
+                    value={settings.pushToTalk}
+                    onChange={(e) => setSettings({ ...settings, pushToTalk: e.target.value })}
+                  />
+                </label>
+                <label>
+                  Hands-free
+                  <input
+                    value={settings.handsFree}
+                    onChange={(e) => setSettings({ ...settings, handsFree: e.target.value })}
+                  />
+                </label>
+                <label>
+                  Command mode
+                  <input
+                    value={settings.commandMode}
+                    onChange={(e) => setSettings({ ...settings, commandMode: e.target.value })}
+                  />
+                </label>
+                <label>
+                  Cleanup level
+                  <select
+                    value={settings.cleanupLevel}
+                    onChange={(e) => setSettings({ ...settings, cleanupLevel: e.target.value })}
+                  >
+                    <option value="off">Off</option>
+                    <option value="medium">Medium</option>
+                    <option value="high">High</option>
+                  </select>
+                </label>
+              </div>
               <label className="check">
                 <input
                   type="checkbox"
@@ -302,18 +391,7 @@ export default function App() {
                   checked={settings.autoCleanup}
                   onChange={(e) => setSettings({ ...settings, autoCleanup: e.target.checked })}
                 />
-                Auto cleanup
-              </label>
-              <label>
-                Cleanup level
-                <select
-                  value={settings.cleanupLevel}
-                  onChange={(e) => setSettings({ ...settings, cleanupLevel: e.target.value })}
-                >
-                  <option value="off">Off</option>
-                  <option value="medium">Medium</option>
-                  <option value="high">High</option>
-                </select>
+                Auto cleanup fillers
               </label>
               <label className="check">
                 <input
@@ -333,105 +411,146 @@ export default function App() {
                   }
                 />
               </label>
-              <button onClick={() => saveSettings(settings)}>Save settings</button>
+              <button type="button" onClick={() => saveSettings(settings)}>
+                Save settings
+              </button>
             </div>
           </section>
         )}
 
         {tab === "dictionary" && (
           <section>
-            <h1>Dictionary</h1>
-            <p className="hint">Replace misheard words with your terms.</p>
-            {dict.map((e, i) => (
-              <div className="row gap" key={i}>
-                <input
-                  value={e.from}
-                  placeholder="from"
-                  onChange={(ev) => {
-                    const next = [...dict];
-                    next[i] = { ...e, from: ev.target.value };
-                    setDict(next);
-                  }}
-                />
-                <input
-                  value={e.to}
-                  placeholder="to"
-                  onChange={(ev) => {
-                    const next = [...dict];
-                    next[i] = { ...e, to: ev.target.value };
-                    setDict(next);
-                  }}
-                />
+            <header className="hero">
+              <div>
+                <h1>Dictionary</h1>
+                <p className="lede">Replace misheard words with your own terms.</p>
               </div>
-            ))}
-            <div className="row gap">
-              <button onClick={() => setDict([...dict, { from: "", to: "" }])}>Add word</button>
-              <button
-                onClick={async () => {
-                  await invoke("set_dictionary", { dict: { words: dict } });
-                  setStatusMsg("Dictionary saved");
-                }}
-              >
-                Save
-              </button>
+            </header>
+            <div className="panel">
+              {dict.map((e, i) => (
+                <div className="pair-row" key={i}>
+                  <input
+                    value={e.from}
+                    placeholder="from"
+                    onChange={(ev) => {
+                      const next = [...dict];
+                      next[i] = { ...e, from: ev.target.value };
+                      setDict(next);
+                    }}
+                  />
+                  <input
+                    value={e.to}
+                    placeholder="to"
+                    onChange={(ev) => {
+                      const next = [...dict];
+                      next[i] = { ...e, to: ev.target.value };
+                      setDict(next);
+                    }}
+                  />
+                  <button
+                    type="button"
+                    className="ghost"
+                    onClick={() => setDict(dict.filter((_, idx) => idx !== i))}
+                  >
+                    Remove
+                  </button>
+                </div>
+              ))}
+              <div className="toolbar">
+                <button type="button" className="ghost" onClick={() => setDict([...dict, { from: "", to: "" }])}>
+                  Add word
+                </button>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    await invoke("set_dictionary", { dict: { words: dict } });
+                    setStatusMsg("Dictionary saved");
+                  }}
+                >
+                  Save
+                </button>
+              </div>
             </div>
           </section>
         )}
 
         {tab === "snippets" && (
           <section>
-            <h1>Snippets</h1>
-            {snips.map((s, i) => (
-              <div className="row gap" key={i}>
-                <input
-                  value={s.trigger}
-                  placeholder="trigger"
-                  onChange={(ev) => {
-                    const next = [...snips];
-                    next[i] = { ...s, trigger: ev.target.value };
-                    setSnips(next);
-                  }}
-                />
-                <input
-                  value={s.expansion}
-                  placeholder="expansion"
-                  onChange={(ev) => {
-                    const next = [...snips];
-                    next[i] = { ...s, expansion: ev.target.value };
-                    setSnips(next);
-                  }}
-                />
+            <header className="hero">
+              <div>
+                <h1>Snippets</h1>
+                <p className="lede">Expand short triggers into longer phrases after transcription.</p>
               </div>
-            ))}
-            <div className="row gap">
-              <button onClick={() => setSnips([...snips, { trigger: "", expansion: "" }])}>
-                Add snippet
-              </button>
-              <button
-                onClick={async () => {
-                  await invoke("set_snippets", { snips: { items: snips } });
-                  setStatusMsg("Snippets saved");
-                }}
-              >
-                Save
-              </button>
+            </header>
+            <div className="panel">
+              {snips.map((s, i) => (
+                <div className="pair-row" key={i}>
+                  <input
+                    value={s.trigger}
+                    placeholder="trigger"
+                    onChange={(ev) => {
+                      const next = [...snips];
+                      next[i] = { ...s, trigger: ev.target.value };
+                      setSnips(next);
+                    }}
+                  />
+                  <input
+                    value={s.expansion}
+                    placeholder="expansion"
+                    onChange={(ev) => {
+                      const next = [...snips];
+                      next[i] = { ...s, expansion: ev.target.value };
+                      setSnips(next);
+                    }}
+                  />
+                  <button
+                    type="button"
+                    className="ghost"
+                    onClick={() => setSnips(snips.filter((_, idx) => idx !== i))}
+                  >
+                    Remove
+                  </button>
+                </div>
+              ))}
+              <div className="toolbar">
+                <button
+                  type="button"
+                  className="ghost"
+                  onClick={() => setSnips([...snips, { trigger: "", expansion: "" }])}
+                >
+                  Add snippet
+                </button>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    await invoke("set_snippets", { snips: { items: snips } });
+                    setStatusMsg("Snippets saved");
+                  }}
+                >
+                  Save
+                </button>
+              </div>
             </div>
           </section>
         )}
 
         {tab === "meetings" && (
           <section>
-            <header className="row between">
-              <h1>Notetaker</h1>
-              <button disabled={busy} onClick={toggleMeeting}>
-                Start / stop meeting
-              </button>
+            <header className="hero">
+              <div>
+                <h1>Notetaker</h1>
+                <p className="lede">Record, transcribe locally, keep summaries offline.</p>
+              </div>
+              <div className="toolbar">
+                <button type="button" disabled={busy} onClick={toggleMeeting}>
+                  Start / stop meeting
+                </button>
+              </div>
             </header>
-            <p className="hint">Records mic audio, transcribes locally, stores summary offline.</p>
             <div className="list">
               {meetings.map((m) => (
                 <article key={m.id} className="card">
-                  <div className="row between">
+                  <div className="meta">
                     <strong>{m.title}</strong>
                     <span className="muted small">{new Date(m.createdAt).toLocaleString()}</span>
                   </div>
@@ -442,17 +561,21 @@ export default function App() {
                   </details>
                 </article>
               ))}
-              {!meetings.length && <p className="muted">No meetings yet.</p>}
+              {!meetings.length && <p className="empty">No meetings yet.</p>}
             </div>
           </section>
         )}
 
         {tab === "mcp" && (
           <section>
-            <h1>MCP for AI agents</h1>
-            <p className="hint">
-              LocalFlow exposes tools on a localhost MCP/JSON-RPC endpoint while the app is running.
-            </p>
+            <header className="hero">
+              <div>
+                <h1>MCP for AI agents</h1>
+                <p className="lede">
+                  Localhost JSON-RPC while LocalFlow is running — no cloud bridge.
+                </p>
+              </div>
+            </header>
             <pre className="code">{`Endpoint: ${mcpHint || "http://127.0.0.1:17832/mcp"}
 
 Cursor / Claude MCP config:

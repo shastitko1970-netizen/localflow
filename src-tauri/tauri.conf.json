@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "LocalFlow",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "identifier": "ai.localflow.app",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -15,10 +15,10 @@
       {
         "label": "main",
         "title": "LocalFlow",
-        "width": 980,
-        "height": 720,
-        "minWidth": 720,
-        "minHeight": 520,
+        "width": 1040,
+        "height": 740,
+        "minWidth": 760,
+        "minHeight": 540,
         "resizable": true,
         "decorations": true
       }
@@ -27,9 +27,23 @@
       "csp": null
     }
   },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEY1Q0M4RDUzMTQ4Rjc1MzIKUldReWRZOFVVNDNNOVpQeHM2c0gwR09RWDZqR2VxZWMwQkhuLzBUNnpsWGNOeHMvaTF2SmUwVC8K",
+      "endpoints": [
+        "https://github.com/shastitko1970-netizen/localflow/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
+  },
   "bundle": {
     "active": true,
     "targets": ["nsis"],
+    "createUpdaterArtifacts": true,
+    "publisher": "LocalFlow",
+    "copyright": "Copyright © LocalFlow Contributors",
     "category": "Productivity",
     "shortDescription": "Offline voice dictation for Windows",
     "longDescription": "LocalFlow turns speech into text in any app using on-device Whisper models. No cloud required.",
@@ -43,7 +57,9 @@
     "windows": {
       "nsis": {
         "installMode": "currentUser",
-        "displayLanguageSelector": false
+        "displayLanguageSelector": false,
+        "installerIcon": "icons/icon.ico",
+        "startMenuFolder": "LocalFlow"
       }
     }
   }

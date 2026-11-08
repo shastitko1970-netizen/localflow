@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.0 — Polish UI + updater
+- Light “signal desk” UI redesign (Fraunces + IBM Plex)
+- Proper multi-size app icon + NSIS Start Menu folder / publisher
+- GitHub Releases auto-updater (`latest.json` + signed NSIS)
+- In-app update banner + Settings “Check for updates”
+
 ## 0.3.0 — Notetaker
 - Meeting start/stop with local Whisper transcript
 - Local bullet summary

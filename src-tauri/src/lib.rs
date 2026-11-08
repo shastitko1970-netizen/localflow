@@ -294,6 +294,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .manage(shared.clone())
         .invoke_handler(tauri::generate_handler![
             get_status,
@@ -319,6 +320,9 @@ pub fn run() {
             data_paths
         ])
         .setup(move |app| {
+            #[cfg(desktop)]
+            app.handle()
+                .plugin(tauri_plugin_updater::Builder::new().build())?;
             let handle = app.handle().clone();
             if let Err(e) = register_shortcuts(&handle, shared.clone()) {
                 tracing::warn!("shortcut registration failed: {e}");
