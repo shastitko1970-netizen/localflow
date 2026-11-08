@@ -1,12 +1,19 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import tailwindcss from "@tailwindcss/vite";
+import { resolve } from "path";
 
 const host = process.env.TAURI_DEV_HOST;
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), tailwindcss()],
+  resolve: {
+    alias: {
+      "@": resolve(__dirname, "./src"),
+    },
+  },
   define: {
-    __APP_VERSION__: JSON.stringify(process.env.npm_package_version ?? "0.1.0"),
+    __APP_VERSION__: JSON.stringify(process.env.npm_package_version ?? "0.4.0"),
   },
   clearScreen: false,
   server: {

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.1 — Untitled UI + dark mode
+- Rebuilt UI on Untitled UI React (Tailwind v4 + React Aria)
+- Dark mode default with light/dark toggle
+- Verified History / Settings / Dictionary locally via screenshots
+
 ## 0.4.0 — Polish UI + updater
 - Light “signal desk” UI redesign (Fraunces + IBM Plex)
 - Proper multi-size app icon + NSIS Start Menu folder / publisher

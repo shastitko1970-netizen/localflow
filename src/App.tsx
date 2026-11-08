@@ -1,9 +1,25 @@
 import { useCallback, useEffect, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
-import { check } from "@tauri-apps/plugin-updater";
-import { relaunch } from "@tauri-apps/plugin-process";
-import "./App.css";
+import {
+  Clock,
+  Settings01,
+  BookOpen01,
+  Zap,
+  Microphone01,
+  Code01,
+  Moon01,
+  Sun,
+  SearchLg,
+  Plus,
+  RefreshCcw01,
+  Download01,
+} from "@untitledui/icons";
+import { Button } from "@/components/base/buttons/button";
+import { Input } from "@/components/base/input/input";
+import { NativeSelect } from "@/components/base/select/select-native";
+import { Checkbox } from "@/components/base/checkbox/checkbox";
+import { cx } from "@/utils/cx";
+import { useTheme } from "@/providers/theme-provider";
+import { checkUpdate, invoke, listen, relaunchApp } from "@/lib/tauri";
 
 type Tab = "history" | "settings" | "dictionary" | "snippets" | "meetings" | "mcp";
 
@@ -44,13 +60,19 @@ type Meeting = {
 type ModelInfo = { id: string; label: string; url: string; sizeHintMb: number };
 type DictEntry = { from: string; to: string };
 type Snippet = { trigger: string; expansion: string };
+type UpdateInfo = { version: string; body?: string | null };
 
-type UpdateInfo = {
-  version: string;
-  body?: string | null;
-};
+const NAV: { id: Tab; label: string; icon: typeof Clock }[] = [
+  { id: "history", label: "History", icon: Clock },
+  { id: "settings", label: "Settings", icon: Settings01 },
+  { id: "dictionary", label: "Dictionary", icon: BookOpen01 },
+  { id: "snippets", label: "Snippets", icon: Zap },
+  { id: "meetings", label: "Notetaker", icon: Microphone01 },
+  { id: "mcp", label: "MCP", icon: Code01 },
+];
 
 export default function App() {
+  const { theme, toggleTheme } = useTheme();
   const [tab, setTab] = useState<Tab>("history");
   const [recording, setRecording] = useState(false);
   const [statusMsg, setStatusMsg] = useState("Ready");
@@ -113,12 +135,12 @@ export default function App() {
     let cancelled = false;
     (async () => {
       try {
-        const update = await check();
+        const update = await checkUpdate();
         if (!cancelled && update) {
           setUpdateInfo({ version: update.version, body: update.body });
         }
       } catch {
-        // Offline / unsigned local builds — ignore quietly.
+        // ignore offline / unsigned builds
       }
     })();
     return () => {
@@ -130,7 +152,7 @@ export default function App() {
     setUpdating(true);
     setStatusMsg("Downloading update…");
     try {
-      const update = await check();
+      const update = await checkUpdate();
       if (!update) {
         setStatusMsg("No update available");
         setUpdateInfo(null);
@@ -138,7 +160,7 @@ export default function App() {
       }
       await update.downloadAndInstall();
       setStatusMsg("Restarting…");
-      await relaunch();
+      await relaunchApp();
     } catch (e) {
       setStatusMsg(String(e));
     } finally {
@@ -168,7 +190,7 @@ export default function App() {
 
   async function doSearch() {
     if (!query.trim()) {
-      refresh();
+      await refresh();
       return;
     }
     const rows = await invoke<Dictation[]>("search_history", { query, limit: 100 });
@@ -195,139 +217,161 @@ export default function App() {
     }
   }
 
-  const tabs: [Tab, string][] = [
-    ["history", "History"],
-    ["settings", "Settings"],
-    ["dictionary", "Dictionary"],
-    ["snippets", "Snippets"],
-    ["meetings", "Notetaker"],
-    ["mcp", "MCP"],
-  ];
-
   return (
-    <div className="shell">
-      <aside className="nav">
-        <div className="brand">
-          <span className="brand-mark" aria-hidden />
-          <div>
-            <strong>LocalFlow</strong>
-            <div className="muted small">offline dictation · v{__APP_VERSION__}</div>
+    <div className="flex h-full min-h-screen bg-secondary text-primary">
+      <aside className="flex w-64 shrink-0 flex-col border-r border-secondary bg-primary">
+        <div className="flex items-center gap-3 px-5 pt-5 pb-4">
+          <div className="flex size-10 items-center justify-center rounded-xl bg-brand-solid text-white shadow-xs">
+            <Microphone01 className="size-5" />
+          </div>
+          <div className="min-w-0">
+            <div className="truncate text-md font-semibold text-primary">LocalFlow</div>
+            <div className="truncate text-xs text-tertiary">offline dictation · v{__APP_VERSION__}</div>
           </div>
         </div>
-        {tabs.map(([id, label]) => (
-          <button
-            key={id}
-            type="button"
-            className={tab === id ? "nav-btn active" : "nav-btn"}
-            onClick={() => setTab(id)}
-          >
-            {label}
-          </button>
-        ))}
-        <div className="nav-foot">
-          <div className={recording ? "pill live" : "pill"}>{recording ? "REC" : "IDLE"}</div>
-          <div className="muted small">{statusMsg}</div>
+
+        <nav className="flex flex-1 flex-col gap-0.5 px-3">
+          {NAV.map(({ id, label, icon: Icon }) => {
+            const active = tab === id;
+            return (
+              <button
+                key={id}
+                type="button"
+                onClick={() => setTab(id)}
+                className={cx(
+                  "flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm font-semibold outline-focus-ring transition",
+                  active
+                    ? "bg-active text-secondary_hover ring-1 ring-secondary ring-inset"
+                    : "text-tertiary hover:bg-primary_hover hover:text-secondary_hover",
+                )}
+              >
+                <Icon className={cx("size-5", active ? "text-fg-brand-primary" : "text-fg-quaternary")} />
+                {label}
+              </button>
+            );
+          })}
+        </nav>
+
+        <div className="mt-auto space-y-3 border-t border-secondary px-4 py-4">
+          <div className="flex items-center justify-between gap-2">
+            <span
+              className={cx(
+                "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ring-1 ring-inset",
+                recording
+                  ? "bg-error-primary text-error-primary ring-error_subtle"
+                  : "bg-success-primary text-success-primary ring-success",
+              )}
+            >
+              <span className={cx("size-1.5 rounded-full", recording ? "bg-fg-error-secondary" : "bg-fg-success-secondary")} />
+              {recording ? "REC" : "IDLE"}
+            </span>
+            <Button
+              size="sm"
+              color="tertiary"
+              iconLeading={theme === "dark" ? Sun : Moon01}
+              aria-label="Toggle theme"
+              onPress={toggleTheme}
+            />
+          </div>
+          <p className="truncate text-xs text-tertiary">{statusMsg}</p>
         </div>
       </aside>
 
-      <main className="main">
-        {updateInfo && (
-          <div className="update-banner">
-            <div>
-              <strong>Update {updateInfo.version}</strong>
-              <div className="muted small">{updateInfo.body || "A newer LocalFlow build is ready."}</div>
-            </div>
-            <button type="button" disabled={updating} onClick={installUpdate}>
-              {updating ? "Installing…" : "Install & restart"}
-            </button>
-          </div>
-        )}
-
-        {tab === "history" && (
-          <section>
-            <header className="hero">
+      <main className="flex min-w-0 flex-1 flex-col overflow-auto">
+        <div className="mx-auto w-full max-w-5xl flex-1 px-6 py-6 lg:px-8">
+          {updateInfo && (
+            <div className="mb-5 flex items-center justify-between gap-4 rounded-xl bg-brand-primary px-4 py-3 ring-1 ring-brand ring-inset">
               <div>
-                <h1>Dictation history</h1>
-                <p className="lede">
-                  Hold <kbd>{settings?.pushToTalk ?? "Ctrl+Win+Space"}</kbd> to speak into any app.
-                  Hands-free <kbd>{settings?.handsFree}</kbd> · Command{" "}
-                  <kbd>{settings?.commandMode}</kbd>
-                </p>
+                <p className="text-sm font-semibold text-secondary">Update {updateInfo.version}</p>
+                <p className="text-sm text-tertiary">{updateInfo.body || "A newer LocalFlow build is ready."}</p>
               </div>
-              <div className="toolbar">
-                <input
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                  placeholder="Search transcripts…"
-                  onKeyDown={(e) => e.key === "Enter" && doSearch()}
-                />
-                <button type="button" onClick={doSearch}>
-                  Search
-                </button>
-                <button type="button" className="ghost" onClick={() => refresh()}>
-                  Refresh
-                </button>
-              </div>
-            </header>
-            <div className="list">
-              {history.map((d) => (
-                <article key={d.id} className="card">
-                  <div className="meta">
-                    <span className="tag">{d.kind}</span>
-                    <span className="muted small">
-                      {new Date(d.createdAt).toLocaleString()} · {d.durationMs}ms
-                    </span>
+              <Button size="sm" isDisabled={updating} onPress={installUpdate}>
+                {updating ? "Installing…" : "Install & restart"}
+              </Button>
+            </div>
+          )}
+
+          {tab === "history" && (
+            <section className="space-y-5">
+              <header className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+                <div>
+                  <h1 className="text-display-xs font-semibold text-primary">Dictation history</h1>
+                  <p className="mt-1 max-w-xl text-md text-tertiary">
+                    Hold <kbd className="rounded-md bg-primary px-1.5 py-0.5 text-sm font-medium text-secondary ring-1 ring-secondary ring-inset">{settings?.pushToTalk ?? "Ctrl+Win+Space"}</kbd> to speak into any app.
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Input
+                    value={query}
+                    onChange={setQuery}
+                    placeholder="Search transcripts…"
+                    icon={SearchLg}
+                    className="min-w-56"
+                    onKeyDown={(e) => e.key === "Enter" && doSearch()}
+                  />
+                  <Button onPress={doSearch}>Search</Button>
+                  <Button color="secondary" iconLeading={RefreshCcw01} onPress={() => refresh()}>
+                    Refresh
+                  </Button>
+                </div>
+              </header>
+
+              <div className="space-y-3">
+                {history.map((d) => (
+                  <article key={d.id} className="rounded-xl bg-primary p-4 shadow-xs ring-1 ring-secondary ring-inset">
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="rounded-md bg-brand-primary px-2 py-0.5 text-xs font-medium text-brand-secondary ring-1 ring-brand ring-inset">
+                        {d.kind}
+                      </span>
+                      <span className="text-xs text-tertiary">
+                        {new Date(d.createdAt).toLocaleString()} · {d.durationMs}ms
+                      </span>
+                    </div>
+                    <p className="mt-3 whitespace-pre-wrap text-md text-secondary">{d.text}</p>
+                  </article>
+                ))}
+                {!history.length && (
+                  <div className="rounded-xl bg-primary px-6 py-12 text-center shadow-xs ring-1 ring-secondary ring-inset">
+                    <p className="text-md font-medium text-secondary">No dictations yet</p>
+                    <p className="mt-1 text-sm text-tertiary">Press the hotkey and talk.</p>
                   </div>
-                  <p>{d.text}</p>
-                </article>
-              ))}
-              {!history.length && <p className="empty">No dictations yet — press the hotkey and talk.</p>}
-            </div>
-          </section>
-        )}
+                )}
+              </div>
+            </section>
+          )}
 
-        {tab === "settings" && settings && (
-          <section>
-            <header className="hero">
-              <div>
-                <h1>Settings</h1>
-                <p className="lede">Models, mic, shortcuts, and local MCP — all on this machine.</p>
-              </div>
-              <div className="toolbar">
-                <button type="button" className="ghost" disabled={updating} onClick={installUpdate}>
+          {tab === "settings" && settings && (
+            <section className="space-y-5">
+              <header className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+                <div>
+                  <h1 className="text-display-xs font-semibold text-primary">Settings</h1>
+                  <p className="mt-1 text-md text-tertiary">Models, mic, shortcuts, and local MCP.</p>
+                </div>
+                <Button color="secondary" isDisabled={updating} onPress={installUpdate}>
                   Check for updates
-                </button>
-              </div>
-            </header>
-            <div className="panel form">
-              <label>
-                Whisper model
-                <select
+                </Button>
+              </header>
+
+              <div className="space-y-5 rounded-xl bg-primary p-5 shadow-xs ring-1 ring-secondary ring-inset sm:p-6">
+                <NativeSelect
+                  label="Whisper model"
                   value={settings.modelId}
                   onChange={(e) => setSettings({ ...settings, modelId: e.target.value })}
-                >
-                  {models.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <button type="button" disabled={busy} onClick={downloadModel}>
-                Download / load model
-              </button>
-              <div className="form-grid">
-                <label>
-                  Language
-                  <input
+                  options={models.map((m) => ({ label: m.label, value: m.id }))}
+                />
+                <Button iconLeading={Download01} isDisabled={busy} onPress={downloadModel}>
+                  Download / load model
+                </Button>
+
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <Input
+                    label="Language"
                     value={settings.language}
-                    onChange={(e) => setSettings({ ...settings, language: e.target.value })}
-                    placeholder="auto / en / ru / …"
+                    onChange={(v) => setSettings({ ...settings, language: v })}
+                    placeholder="auto / en / ru"
                   />
-                </label>
-                <label>
-                  Microphone
-                  <select
+                  <NativeSelect
+                    label="Microphone"
                     value={settings.inputDevice ?? ""}
                     onChange={(e) =>
                       setSettings({
@@ -335,248 +379,215 @@ export default function App() {
                         inputDevice: e.target.value || null,
                       })
                     }
-                  >
-                    <option value="">System default</option>
-                    {mics.map((m) => (
-                      <option key={m} value={m}>
-                        {m}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label>
-                  Push-to-talk
-                  <input
+                    options={[
+                      { label: "System default", value: "" },
+                      ...mics.map((m) => ({ label: m, value: m })),
+                    ]}
+                  />
+                  <Input
+                    label="Push-to-talk"
                     value={settings.pushToTalk}
-                    onChange={(e) => setSettings({ ...settings, pushToTalk: e.target.value })}
+                    onChange={(v) => setSettings({ ...settings, pushToTalk: v })}
                   />
-                </label>
-                <label>
-                  Hands-free
-                  <input
+                  <Input
+                    label="Hands-free"
                     value={settings.handsFree}
-                    onChange={(e) => setSettings({ ...settings, handsFree: e.target.value })}
+                    onChange={(v) => setSettings({ ...settings, handsFree: v })}
                   />
-                </label>
-                <label>
-                  Command mode
-                  <input
+                  <Input
+                    label="Command mode"
                     value={settings.commandMode}
-                    onChange={(e) => setSettings({ ...settings, commandMode: e.target.value })}
+                    onChange={(v) => setSettings({ ...settings, commandMode: v })}
                   />
-                </label>
-                <label>
-                  Cleanup level
-                  <select
+                  <NativeSelect
+                    label="Cleanup level"
                     value={settings.cleanupLevel}
                     onChange={(e) => setSettings({ ...settings, cleanupLevel: e.target.value })}
-                  >
-                    <option value="off">Off</option>
-                    <option value="medium">Medium</option>
-                    <option value="high">High</option>
-                  </select>
-                </label>
-              </div>
-              <label className="check">
-                <input
-                  type="checkbox"
-                  checked={settings.autoPaste}
-                  onChange={(e) => setSettings({ ...settings, autoPaste: e.target.checked })}
-                />
-                Auto-paste into focused app
-              </label>
-              <label className="check">
-                <input
-                  type="checkbox"
-                  checked={settings.autoCleanup}
-                  onChange={(e) => setSettings({ ...settings, autoCleanup: e.target.checked })}
-                />
-                Auto cleanup fillers
-              </label>
-              <label className="check">
-                <input
-                  type="checkbox"
-                  checked={settings.mcpEnabled}
-                  onChange={(e) => setSettings({ ...settings, mcpEnabled: e.target.checked })}
-                />
-                Enable local MCP HTTP server
-              </label>
-              <label>
-                MCP port
-                <input
+                    options={[
+                      { label: "Off", value: "off" },
+                      { label: "Medium", value: "medium" },
+                      { label: "High", value: "high" },
+                    ]}
+                  />
+                </div>
+
+                <div className="space-y-3">
+                  <Checkbox
+                    isSelected={settings.autoPaste}
+                    onChange={(v) => setSettings({ ...settings, autoPaste: v })}
+                    label="Auto-paste into focused app"
+                  />
+                  <Checkbox
+                    isSelected={settings.autoCleanup}
+                    onChange={(v) => setSettings({ ...settings, autoCleanup: v })}
+                    label="Auto cleanup fillers"
+                  />
+                  <Checkbox
+                    isSelected={settings.mcpEnabled}
+                    onChange={(v) => setSettings({ ...settings, mcpEnabled: v })}
+                    label="Enable local MCP HTTP server"
+                  />
+                </div>
+
+                <Input
+                  label="MCP port"
                   type="number"
-                  value={settings.mcpPort}
-                  onChange={(e) =>
-                    setSettings({ ...settings, mcpPort: Number(e.target.value) || 17832 })
+                  value={String(settings.mcpPort)}
+                  onChange={(v) =>
+                    setSettings({ ...settings, mcpPort: Number(v) || 17832 })
                   }
                 />
-              </label>
-              <button type="button" onClick={() => saveSettings(settings)}>
-                Save settings
-              </button>
-            </div>
-          </section>
-        )}
 
-        {tab === "dictionary" && (
-          <section>
-            <header className="hero">
-              <div>
-                <h1>Dictionary</h1>
-                <p className="lede">Replace misheard words with your own terms.</p>
+                <Button onPress={() => saveSettings(settings)}>Save settings</Button>
               </div>
-            </header>
-            <div className="panel">
-              {dict.map((e, i) => (
-                <div className="pair-row" key={i}>
-                  <input
-                    value={e.from}
-                    placeholder="from"
-                    onChange={(ev) => {
-                      const next = [...dict];
-                      next[i] = { ...e, from: ev.target.value };
-                      setDict(next);
-                    }}
-                  />
-                  <input
-                    value={e.to}
-                    placeholder="to"
-                    onChange={(ev) => {
-                      const next = [...dict];
-                      next[i] = { ...e, to: ev.target.value };
-                      setDict(next);
-                    }}
-                  />
-                  <button
-                    type="button"
-                    className="ghost"
-                    onClick={() => setDict(dict.filter((_, idx) => idx !== i))}
-                  >
-                    Remove
-                  </button>
-                </div>
-              ))}
-              <div className="toolbar">
-                <button type="button" className="ghost" onClick={() => setDict([...dict, { from: "", to: "" }])}>
-                  Add word
-                </button>
-                <button
-                  type="button"
-                  onClick={async () => {
-                    await invoke("set_dictionary", { dict: { words: dict } });
-                    setStatusMsg("Dictionary saved");
-                  }}
-                >
-                  Save
-                </button>
-              </div>
-            </div>
-          </section>
-        )}
+            </section>
+          )}
 
-        {tab === "snippets" && (
-          <section>
-            <header className="hero">
-              <div>
-                <h1>Snippets</h1>
-                <p className="lede">Expand short triggers into longer phrases after transcription.</p>
-              </div>
-            </header>
-            <div className="panel">
-              {snips.map((s, i) => (
-                <div className="pair-row" key={i}>
-                  <input
-                    value={s.trigger}
-                    placeholder="trigger"
-                    onChange={(ev) => {
-                      const next = [...snips];
-                      next[i] = { ...s, trigger: ev.target.value };
-                      setSnips(next);
-                    }}
-                  />
-                  <input
-                    value={s.expansion}
-                    placeholder="expansion"
-                    onChange={(ev) => {
-                      const next = [...snips];
-                      next[i] = { ...s, expansion: ev.target.value };
-                      setSnips(next);
-                    }}
-                  />
-                  <button
-                    type="button"
-                    className="ghost"
-                    onClick={() => setSnips(snips.filter((_, idx) => idx !== i))}
-                  >
-                    Remove
-                  </button>
-                </div>
-              ))}
-              <div className="toolbar">
-                <button
-                  type="button"
-                  className="ghost"
-                  onClick={() => setSnips([...snips, { trigger: "", expansion: "" }])}
-                >
-                  Add snippet
-                </button>
-                <button
-                  type="button"
-                  onClick={async () => {
-                    await invoke("set_snippets", { snips: { items: snips } });
-                    setStatusMsg("Snippets saved");
-                  }}
-                >
-                  Save
-                </button>
-              </div>
-            </div>
-          </section>
-        )}
-
-        {tab === "meetings" && (
-          <section>
-            <header className="hero">
-              <div>
-                <h1>Notetaker</h1>
-                <p className="lede">Record, transcribe locally, keep summaries offline.</p>
-              </div>
-              <div className="toolbar">
-                <button type="button" disabled={busy} onClick={toggleMeeting}>
-                  Start / stop meeting
-                </button>
-              </div>
-            </header>
-            <div className="list">
-              {meetings.map((m) => (
-                <article key={m.id} className="card">
-                  <div className="meta">
-                    <strong>{m.title}</strong>
-                    <span className="muted small">{new Date(m.createdAt).toLocaleString()}</span>
+          {tab === "dictionary" && (
+            <section className="space-y-5">
+              <header>
+                <h1 className="text-display-xs font-semibold text-primary">Dictionary</h1>
+                <p className="mt-1 text-md text-tertiary">Replace misheard words with your own terms.</p>
+              </header>
+              <div className="space-y-3 rounded-xl bg-primary p-5 shadow-xs ring-1 ring-secondary ring-inset">
+                {dict.map((e, i) => (
+                  <div key={i} className="grid gap-2 sm:grid-cols-[1fr_1fr_auto]">
+                    <Input
+                      value={e.from}
+                      placeholder="from"
+                      onChange={(v) => {
+                        const next = [...dict];
+                        next[i] = { ...e, from: v };
+                        setDict(next);
+                      }}
+                    />
+                    <Input
+                      value={e.to}
+                      placeholder="to"
+                      onChange={(v) => {
+                        const next = [...dict];
+                        next[i] = { ...e, to: v };
+                        setDict(next);
+                      }}
+                    />
+                    <Button color="secondary" onPress={() => setDict(dict.filter((_, idx) => idx !== i))}>
+                      Remove
+                    </Button>
                   </div>
-                  <pre className="summary">{m.summary}</pre>
-                  <details>
-                    <summary>Transcript</summary>
-                    <p>{m.transcript || "(empty)"}</p>
-                  </details>
-                </article>
-              ))}
-              {!meetings.length && <p className="empty">No meetings yet.</p>}
-            </div>
-          </section>
-        )}
-
-        {tab === "mcp" && (
-          <section>
-            <header className="hero">
-              <div>
-                <h1>MCP for AI agents</h1>
-                <p className="lede">
-                  Localhost JSON-RPC while LocalFlow is running — no cloud bridge.
-                </p>
+                ))}
+                <div className="flex flex-wrap gap-2 pt-2">
+                  <Button color="secondary" iconLeading={Plus} onPress={() => setDict([...dict, { from: "", to: "" }])}>
+                    Add word
+                  </Button>
+                  <Button
+                    onPress={async () => {
+                      await invoke("set_dictionary", { dict: { words: dict } });
+                      setStatusMsg("Dictionary saved");
+                    }}
+                  >
+                    Save
+                  </Button>
+                </div>
               </div>
-            </header>
-            <pre className="code">{`Endpoint: ${mcpHint || "http://127.0.0.1:17832/mcp"}
+            </section>
+          )}
+
+          {tab === "snippets" && (
+            <section className="space-y-5">
+              <header>
+                <h1 className="text-display-xs font-semibold text-primary">Snippets</h1>
+                <p className="mt-1 text-md text-tertiary">Expand short triggers into longer phrases.</p>
+              </header>
+              <div className="space-y-3 rounded-xl bg-primary p-5 shadow-xs ring-1 ring-secondary ring-inset">
+                {snips.map((s, i) => (
+                  <div key={i} className="grid gap-2 sm:grid-cols-[1fr_1fr_auto]">
+                    <Input
+                      value={s.trigger}
+                      placeholder="trigger"
+                      onChange={(v) => {
+                        const next = [...snips];
+                        next[i] = { ...s, trigger: v };
+                        setSnips(next);
+                      }}
+                    />
+                    <Input
+                      value={s.expansion}
+                      placeholder="expansion"
+                      onChange={(v) => {
+                        const next = [...snips];
+                        next[i] = { ...s, expansion: v };
+                        setSnips(next);
+                      }}
+                    />
+                    <Button color="secondary" onPress={() => setSnips(snips.filter((_, idx) => idx !== i))}>
+                      Remove
+                    </Button>
+                  </div>
+                ))}
+                <div className="flex flex-wrap gap-2 pt-2">
+                  <Button
+                    color="secondary"
+                    iconLeading={Plus}
+                    onPress={() => setSnips([...snips, { trigger: "", expansion: "" }])}
+                  >
+                    Add snippet
+                  </Button>
+                  <Button
+                    onPress={async () => {
+                      await invoke("set_snippets", { snips: { items: snips } });
+                      setStatusMsg("Snippets saved");
+                    }}
+                  >
+                    Save
+                  </Button>
+                </div>
+              </div>
+            </section>
+          )}
+
+          {tab === "meetings" && (
+            <section className="space-y-5">
+              <header className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+                <div>
+                  <h1 className="text-display-xs font-semibold text-primary">Notetaker</h1>
+                  <p className="mt-1 text-md text-tertiary">Record, transcribe locally, keep summaries offline.</p>
+                </div>
+                <Button isDisabled={busy} onPress={toggleMeeting}>
+                  Start / stop meeting
+                </Button>
+              </header>
+              <div className="space-y-3">
+                {meetings.map((m) => (
+                  <article key={m.id} className="rounded-xl bg-primary p-4 shadow-xs ring-1 ring-secondary ring-inset">
+                    <div className="flex items-center justify-between gap-3">
+                      <h2 className="text-md font-semibold text-primary">{m.title}</h2>
+                      <span className="text-xs text-tertiary">{new Date(m.createdAt).toLocaleString()}</span>
+                    </div>
+                    <pre className="mt-3 overflow-auto rounded-lg bg-secondary p-3 text-sm text-secondary whitespace-pre-wrap">
+                      {m.summary}
+                    </pre>
+                    <details className="mt-2">
+                      <summary className="cursor-pointer text-sm text-tertiary">Transcript</summary>
+                      <p className="mt-2 text-sm text-secondary">{m.transcript || "(empty)"}</p>
+                    </details>
+                  </article>
+                ))}
+                {!meetings.length && (
+                  <div className="rounded-xl bg-primary px-6 py-12 text-center shadow-xs ring-1 ring-secondary ring-inset">
+                    <p className="text-md font-medium text-secondary">No meetings yet</p>
+                  </div>
+                )}
+              </div>
+            </section>
+          )}
+
+          {tab === "mcp" && (
+            <section className="space-y-5">
+              <header>
+                <h1 className="text-display-xs font-semibold text-primary">MCP for AI agents</h1>
+                <p className="mt-1 text-md text-tertiary">Localhost JSON-RPC while LocalFlow is running.</p>
+              </header>
+              <pre className="overflow-auto rounded-xl bg-primary p-5 text-sm text-secondary shadow-xs ring-1 ring-secondary ring-inset whitespace-pre-wrap font-mono">{`Endpoint: ${mcpHint || "http://127.0.0.1:17832/mcp"}
 
 Cursor / Claude MCP config:
 {
@@ -589,8 +600,9 @@ Cursor / Claude MCP config:
 
 Tools: list_dictations, get_dictation, search_dictations,
 get_status, list_meetings, get_meeting`}</pre>
-          </section>
-        )}
+            </section>
+          )}
+        </div>
       </main>
     </div>
   );

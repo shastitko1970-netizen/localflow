@@ -1,7 +1,7 @@
 {
   "name": "localflow",
   "private": true,
-  "version": "0.4.0",
+  "version": "0.4.1",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -12,15 +12,24 @@
     "tauri:build": "tauri build"
   },
   "dependencies": {
+    "@tailwindcss/typography": "^0.5.20",
+    "@tailwindcss/vite": "^4.3.5",
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-opener": "^2",
     "@tauri-apps/plugin-process": "^2.4.0",
     "@tauri-apps/plugin-updater": "^2.14.1",
+    "@untitledui/icons": "^0.0.23",
     "react": "^19.1.0",
-    "react-dom": "^19.1.0"
+    "react-aria-components": "^1.22.1",
+    "react-dom": "^19.1.0",
+    "tailwind-merge": "^3.7.0",
+    "tailwindcss": "^4.3.5",
+    "tailwindcss-animate": "^1.0.7",
+    "tailwindcss-react-aria-components": "^2.2.0"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2",
+    "@types/node": "^26.6.6",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
     "@vitejs/plugin-react": "^4.7.0",
