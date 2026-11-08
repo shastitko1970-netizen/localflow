@@ -14,7 +14,7 @@ mod stt;
 use crate::dictionary::{load_dictionary, save_dictionary, Dictionary};
 use crate::error::AppResult;
 use crate::history::{Dictation, Meeting};
-use crate::settings::{known_models, AppSettings, ModelInfo};
+use crate::settings::{AppSettings, ModelInfo};
 use crate::snippets::{load_snippets, save_snippets, Snippets};
 use crate::state::{AppState, RuntimeStatus, SessionMode, SharedState};
 use std::sync::Arc;
@@ -42,13 +42,15 @@ fn set_settings(state: State<'_, SharedState>, settings: AppSettings) -> AppResu
 }
 
 #[tauri::command]
-fn list_models() -> Vec<ModelInfo> {
-    known_models()
+fn list_models() -> AppResult<Vec<ModelInfo>> {
+    settings::list_models()
 }
 
 #[tauri::command]
-fn list_mics() -> AppResult<Vec<String>> {
-    audio::Recorder::list_input_devices()
+async fn list_mics() -> AppResult<Vec<String>> {
+    tauri::async_runtime::spawn_blocking(audio::Recorder::list_input_devices)
+        .await
+        .map_err(|error| crate::error::AppError::msg(error.to_string()))?
 }
 
 async fn run_audio<T: Send + 'static>(
@@ -81,6 +83,43 @@ async fn ensure_model(state: State<'_, SharedState>, model_id: String) -> AppRes
         state.stt.status().model_path.ok_or_else(|| {
             crate::error::AppError::msg("Whisper did not load the model")
         })
+    }).await
+}
+
+#[tauri::command]
+async fn download_model(state: State<'_, SharedState>, model_id: String) -> AppResult<()> {
+    run_audio(state.inner(), move |_| settings::ensure_model(&model_id).map(|_| ())).await
+}
+
+#[tauri::command]
+async fn import_model(state: State<'_, SharedState>, url: String) -> AppResult<()> {
+    run_audio(state.inner(), move |_| settings::import_model(&url)).await
+}
+
+#[tauri::command]
+async fn delete_model(state: State<'_, SharedState>, model_id: String) -> AppResult<()> {
+    run_audio(state.inner(), move |state| {
+        if state.recorder.is_recording() {
+            return Err(crate::error::AppError::msg("Finish recording before deleting a model."));
+        }
+        let path = settings::model_path(&model_id)?;
+        let mut settings = state.settings.lock();
+        state.stt.unload(&path);
+        if settings.model_id != model_id {
+            return Ok(std::fs::remove_file(path)?);
+        }
+
+        let removed = path.with_extension("bin.removed");
+        std::fs::rename(&path, &removed)?;
+        let mut updated = settings.clone();
+        updated.model_id.clear();
+        if let Err(error) = crate::settings::save_settings(&updated) {
+            std::fs::rename(&removed, &path)?;
+            return Err(error);
+        }
+        *settings = updated;
+        std::fs::remove_file(removed)?;
+        Ok(())
     }).await
 }
 
@@ -194,6 +233,7 @@ fn data_paths() -> serde_json::Value {
 #[tauri::command]
 fn show_flowbar(app: AppHandle) -> AppResult<()> {
     if let Some(win) = app.get_webview_window("flowbar") {
+        position_flowbar(&win)?;
         win.show()?;
         win.set_always_on_top(true)?;
     } else {
@@ -229,7 +269,7 @@ fn spawn_flowbar(app: &AppHandle) -> AppResult<()> {
         .shadow(false)
         .always_on_top(true)
         .skip_taskbar(true)
-        .visible(true)
+        .visible(false)
         .focused(false)
         .build()?;
 
@@ -247,16 +287,20 @@ fn spawn_flowbar(app: &AppHandle) -> AppResult<()> {
         }
     }
 
-    if let Ok(Some(monitor)) = window.current_monitor() {
-        let scale = monitor.scale_factor();
-        let size = monitor.size();
-        let win_w = (win_w_logical * scale) as i32;
-        let win_h = (win_h_logical * scale) as i32;
-        let x = monitor.position().x + (size.width as i32 - win_w) / 2;
-        let y = monitor.position().y + size.height as i32 - win_h - (56.0 * scale) as i32;
-        let _ = window.set_position(tauri::PhysicalPosition::new(x, y));
-    }
+    position_flowbar(&window)?;
+    window.show()?;
 
+    Ok(())
+}
+
+fn position_flowbar(window: &tauri::WebviewWindow) -> AppResult<()> {
+    if let Some(monitor) = window.current_monitor()? {
+        let area = monitor.work_area();
+        let size = window.outer_size()?;
+        let x = area.position.x + (area.size.width.saturating_sub(size.width) / 2) as i32;
+        let y = area.position.y + area.size.height.saturating_sub(size.height) as i32;
+        window.set_position(tauri::PhysicalPosition::new(x, y))?;
+    }
     Ok(())
 }
 
@@ -419,6 +463,9 @@ pub fn run() {
             list_models,
             list_mics,
             ensure_model,
+            download_model,
+            import_model,
+            delete_model,
             start_dictation,
             start_command,
             stop_dictation,

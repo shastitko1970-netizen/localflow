@@ -26,12 +26,7 @@ impl SttEngine {
             return Ok(());
         }
         tracing::info!("Loading Whisper model from {}", path.display());
-        let params = WhisperContextParameters::default();
-        let ctx = WhisperContext::new_with_params(
-            path.to_str().ok_or_else(|| AppError::msg("invalid model path"))?,
-            params,
-        )
-        .map_err(|e| AppError::msg(format!("whisper load: {e}")))?;
+        let ctx = load_context(&path)?;
         *self.ctx.lock() = Some(ctx);
         *self.loaded_model.lock() = Some(path);
         Ok(())
@@ -79,6 +74,15 @@ impl SttEngine {
         Ok(out)
     }
 
+    pub fn unload(&self, path: &std::path::Path) {
+        let _loading = self.loading.lock();
+        let mut loaded = self.loaded_model.lock();
+        if loaded.as_deref() == Some(path) {
+            *self.ctx.lock() = None;
+            *loaded = None;
+        }
+    }
+
     pub fn status(&self) -> SttStatus {
         let loaded = self.loaded_model.lock().clone();
         SttStatus {
@@ -97,6 +101,15 @@ unsafe impl Sync for SttEngine {}
 pub struct SttStatus {
     pub model_loaded: bool,
     pub model_path: Option<String>,
+}
+
+pub fn load_context(path: &std::path::Path) -> AppResult<WhisperContext> {
+    WhisperContext::new_with_params(
+        path.to_str()
+            .ok_or_else(|| AppError::msg("Invalid model path"))?,
+        WhisperContextParameters::default(),
+    )
+    .map_err(|error| AppError::msg(format!("Whisper could not load this model: {error}")))
 }
 
 fn num_threads() -> std::ffi::c_int {

@@ -1,3 +1,4 @@
+import { ModelsSettings } from "@/ModelsSettings";
 import { useCallback, useEffect, useMemo, useState, type ComponentType, type SVGProps } from "react";
 import {
   Microphone01,
@@ -15,7 +16,6 @@ import {
   SearchLg,
   Plus,
   RefreshCcw01,
-  Download01,
   XClose,
 } from "@untitledui/icons";
 import { Button } from "@/components/base/buttons/button";
@@ -71,7 +71,6 @@ type Meeting = {
   durationMs: number;
 };
 
-type ModelInfo = { id: string; label: string; url: string; sizeHintMb: number };
 type DictEntry = { from: string; to: string };
 type Snippet = { trigger: string; expansion: string };
 type UpdateInfo = { version: string; body?: string | null };
@@ -113,7 +112,8 @@ export default function App() {
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [history, setHistory] = useState<Dictation[]>([]);
   const [meetings, setMeetings] = useState<Meeting[]>([]);
-  const [models, setModels] = useState<ModelInfo[]>([]);
+  const [settingsPage, setSettingsPage] = useState<"General" | "Models">("General");
+  const [micError, setMicError] = useState("");
   const [mics, setMics] = useState<string[]>([]);
   const [dict, setDict] = useState<DictEntry[]>([]);
   const [snips, setSnips] = useState<Snippet[]>([]);
@@ -127,21 +127,17 @@ export default function App() {
   const [flowBarOn, setFlowBarOn] = useState(true);
 
   const refresh = useCallback(async () => {
-    const [s, h, m, ms, mic, d, sn, paths] = await Promise.all([
+    const [s, h, ms, d, sn, paths] = await Promise.all([
       invoke<AppSettings>("get_settings"),
       invoke<Dictation[]>("list_history", { limit: 100 }),
-      invoke<ModelInfo[]>("list_models"),
       invoke<Meeting[]>("list_meetings", { limit: 100 }),
-      invoke<string[]>("list_mics"),
       invoke<{ words: DictEntry[] }>("get_dictionary"),
       invoke<{ items: Snippet[] }>("get_snippets"),
       invoke<{ mcpHint: string }>("data_paths"),
     ]);
     setSettings(s);
     setHistory(h);
-    setModels(m);
     setMeetings(ms);
-    setMics(mic);
     setDict(d.words ?? []);
     setSnips(sn.items ?? []);
     setMcpHint(paths.mcpHint);
@@ -193,6 +189,18 @@ export default function App() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!settingsOpen || settingsPage !== "General") return;
+    let active = true;
+    setMicError("");
+    invoke<string[]>("list_mics").then((devices) => {
+      if (active) setMics([...new Set(devices)]);
+    }).catch((cause) => {
+      if (active) setMicError(String(cause));
+    });
+    return () => { active = false; };
+  }, [settingsOpen, settingsPage]);
+
   const grouped = useMemo(() => groupByDate(history), [history]);
   const wordCount = useMemo(
     () => history.reduce((n, d) => n + d.text.trim().split(/\s+/).filter(Boolean).length, 0),
@@ -201,7 +209,7 @@ export default function App() {
 
   async function checkForUpdates() {
     setCheckingUpdate(true);
-    setUpdateMessage("Checking GitHub for updates…");
+    setUpdateMessage("Checking GitHub for updatesâ€¦");
     try {
       const update = await checkUpdate();
       if (!update) {
@@ -222,7 +230,7 @@ export default function App() {
 
   async function installUpdate() {
     setUpdating(true);
-    setUpdateMessage("Downloading and installing update…");
+    setUpdateMessage("Downloading and installing updateâ€¦");
     try {
       const update = await checkUpdate();
       if (!update) {
@@ -249,20 +257,6 @@ export default function App() {
     const saved = await invoke<AppSettings>("set_settings", { settings: next });
     setSettings(saved);
     setStatusMsg("Settings saved");
-  }
-
-  async function downloadModel() {
-    if (!settings) return;
-    setBusy(true);
-    setStatusMsg("Preparing Whisper model…");
-    try {
-      const path = await invoke<string>("ensure_model", { modelId: settings.modelId });
-      setStatusMsg(`Model ready: ${path}`);
-    } catch (e) {
-      setStatusMsg(String(e));
-    } finally {
-      setBusy(false);
-    }
   }
 
   async function doSearch() {
@@ -640,14 +634,20 @@ export default function App() {
       {settingsOpen && settings && (
         <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/60 p-6 backdrop-blur-sm">
           <div className="flex max-h-[90vh] w-full max-w-3xl overflow-hidden rounded-2xl border border-white/10 bg-[#141414] shadow-2xl">
-            <div className="w-48 shrink-0 border-r border-white/8 p-4">
+            <div className="w-28 shrink-0 border-r border-white/8 p-3 sm:w-44 sm:p-4">
               <p className="mb-3 text-[10px] font-semibold tracking-wider text-white/35 uppercase">Settings</p>
-              <p className="rounded-lg bg-white/8 px-3 py-2 text-sm">General</p>
+              <nav className="space-y-1" aria-label="Settings sections">
+                {(["General", "Models"] as const).map((page) => (
+                  <button type="button" key={page} aria-current={settingsPage === page ? "page" : undefined}
+                    className={`w-full rounded-lg px-3 py-2 text-left text-sm ${settingsPage === page ? "bg-white/8" : "text-white/55 hover:bg-white/5"}`}
+                    onClick={() => setSettingsPage(page)}>{page}</button>
+                ))}
+              </nav>
               <p className="mt-auto pt-8 text-[11px] text-white/30">LocalFlow v{__APP_VERSION__}</p>
             </div>
-            <div className="min-w-0 flex-1 overflow-auto p-5">
+            <div className="min-w-0 flex-1 overflow-x-hidden overflow-y-auto p-5">
               <div className="mb-4 flex items-center justify-between">
-                <h2 className="font-serif text-2xl">General</h2>
+                <h2 className="font-serif text-2xl">{settingsPage}</h2>
                 <button
                   type="button"
                   onClick={() => setSettingsOpen(false)}
@@ -656,83 +656,155 @@ export default function App() {
                   <XClose className="size-5" />
                 </button>
               </div>
-              <div className="space-y-4">
-                <NativeSelect
-                  label="Whisper model"
-                  value={settings.modelId}
-                  onChange={(e) => setSettings({ ...settings, modelId: e.target.value })}
-                  options={models.map((m) => ({ label: m.label, value: m.id }))}
-                />
-                <Button iconLeading={Download01} isDisabled={busy} onPress={downloadModel}>
-                  Download / load model
-                </Button>
-                <div className="grid gap-3 sm:grid-cols-2">
+              {settingsPage === "Models" ? (
+                <ModelsSettings selectedId={settings.modelId} onSelectionChange={(modelId) =>
+                  setSettings((current) => current && { ...current, modelId })} />
+              ) : (
+                <div className="space-y-4">
+
+                  <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+
+                    <Input
+
+                      label="Language"
+
+                      value={settings.language}
+
+                      onChange={(v) => setSettings({ ...settings, language: v })}
+
+                    />
+
+                    <NativeSelect
+
+                      label="Microphone"
+
+                      hint={micError || undefined}
+
+                      value={settings.inputDevice ?? ""}
+
+                      onChange={(e) =>
+
+                        setSettings({ ...settings, inputDevice: e.target.value || null })
+
+                      }
+
+                      options={[
+
+                        { label: "System default", value: "" },
+
+                        ...(settings.inputDevice && !mics.includes(settings.inputDevice)
+
+                          ? [{ label: `${settings.inputDevice} (unavailable)`, value: settings.inputDevice, disabled: true }]
+
+                          : []),
+
+                        ...mics.map((m) => ({ label: m, value: m })),
+
+                      ]}
+
+                    />
+
+                    <Input
+
+                      label="Push-to-talk"
+
+                      value={settings.pushToTalk}
+
+                      onChange={(v) => setSettings({ ...settings, pushToTalk: v })}
+
+                    />
+
+                    <Input
+
+                      label="Hands-free"
+
+                      value={settings.handsFree}
+
+                      onChange={(v) => setSettings({ ...settings, handsFree: v })}
+
+                    />
+
+                  </div>
+
+                  <Checkbox
+
+                    isSelected={settings.autoPaste}
+
+                    onChange={(v) => setSettings({ ...settings, autoPaste: v })}
+
+                    label="Auto-paste into focused app"
+
+                  />
+
+                  <Checkbox
+
+                    isSelected={settings.mcpEnabled}
+
+                    onChange={(v) => setSettings({ ...settings, mcpEnabled: v })}
+
+                    label="Enable local MCP HTTP server"
+
+                  />
+
                   <Input
-                    label="Language"
-                    value={settings.language}
-                    onChange={(v) => setSettings({ ...settings, language: v })}
+
+                    label="MCP port"
+
+                    type="number"
+
+                    value={String(settings.mcpPort)}
+
+                    onChange={(v) => setSettings({ ...settings, mcpPort: Number(v) || 17832 })}
+
                   />
-                  <NativeSelect
-                    label="Microphone"
-                    value={settings.inputDevice ?? ""}
-                    onChange={(e) =>
-                      setSettings({ ...settings, inputDevice: e.target.value || null })
-                    }
-                    options={[
-                      { label: "System default", value: "" },
-                      ...mics.map((m) => ({ label: m, value: m })),
-                    ]}
-                  />
-                  <Input
-                    label="Push-to-talk"
-                    value={settings.pushToTalk}
-                    onChange={(v) => setSettings({ ...settings, pushToTalk: v })}
-                  />
-                  <Input
-                    label="Hands-free"
-                    value={settings.handsFree}
-                    onChange={(v) => setSettings({ ...settings, handsFree: v })}
-                  />
-                </div>
-                <Checkbox
-                  isSelected={settings.autoPaste}
-                  onChange={(v) => setSettings({ ...settings, autoPaste: v })}
-                  label="Auto-paste into focused app"
-                />
-                <Checkbox
-                  isSelected={settings.mcpEnabled}
-                  onChange={(v) => setSettings({ ...settings, mcpEnabled: v })}
-                  label="Enable local MCP HTTP server"
-                />
-                <Input
-                  label="MCP port"
-                  type="number"
-                  value={String(settings.mcpPort)}
-                  onChange={(v) => setSettings({ ...settings, mcpPort: Number(v) || 17832 })}
-                />
-                <div className="flex flex-wrap gap-2 pt-2">
-                  <Button
-                    color="secondary"
-                    onPress={() => {
-                      saveSettings(settings);
-                      setSettingsOpen(false);
-                    }}
-                  >
-                    Save
-                  </Button>
-                  <Button color="tertiary" isDisabled={updating || checkingUpdate} onPress={checkForUpdates}>
-                    {checkingUpdate ? "Checking…" : "Check for updates"}
-                  </Button>
-                  {updateInfo && (
-                    <Button color="secondary" isDisabled={updating || checkingUpdate} onPress={installUpdate}>
-                      {updating ? "Installing…" : `Install ${updateInfo.version}`}
+
+                  <div className="flex flex-wrap gap-2 pt-2">
+
+                    <Button
+
+                      color="secondary"
+
+                      onPress={() => {
+
+                        saveSettings(settings);
+
+                        setSettingsOpen(false);
+
+                      }}
+
+                    >
+
+                      Save
+
                     </Button>
-                  )}
+
+                    <Button color="tertiary" isDisabled={updating || checkingUpdate} onPress={checkForUpdates}>
+
+                      {checkingUpdate ? "Checkingâ€¦" : "Check for updates"}
+
+                    </Button>
+
+                    {updateInfo && (
+
+                      <Button color="secondary" isDisabled={updating || checkingUpdate} onPress={installUpdate}>
+
+                        {updating ? "Installingâ€¦" : `Install ${updateInfo.version}`}
+
+                      </Button>
+
+                    )}
+
+                  </div>
+
+                  <p role="status" className="break-words text-sm text-white/70">
+
+                    {updateMessage}
+
+                  </p>
+
                 </div>
-                <p role="status" className="break-words text-sm text-white/70">
-                  {updateMessage}
-                </p>
-              </div>
+
+              )}
             </div>
           </div>
         </div>

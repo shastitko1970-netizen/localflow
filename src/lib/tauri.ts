@@ -8,7 +8,7 @@ const isTauri =
   ("__TAURI_INTERNALS__" in window || "__TAURI__" in window);
 
 const mockSettings = {
-  modelId: "base",
+  modelId: "ggml-base.bin",
   language: "auto",
   pushToTalk: "Ctrl+Super+Space",
   handsFree: "Ctrl+Shift+Super+Space",
@@ -45,9 +45,9 @@ const mockHistory = [
 ];
 
 const mockModels = [
-  { id: "tiny", label: "Tiny (~75 MB)", url: "", sizeHintMb: 75 },
-  { id: "base", label: "Base (~142 MB) — recommended", url: "", sizeHintMb: 142 },
-  { id: "small", label: "Small (~466 MB)", url: "", sizeHintMb: 466 },
+  { id: "ggml-base.bin", label: "Base (balanced)", sizeBytes: 147951465, installed: true, recommended: true },
+  { id: "ggml-base-q5_1.bin", label: "Base Q5 (compact)", sizeBytes: 59707625, installed: false, recommended: true },
+  { id: "ggml-large-v3-turbo-q5_0.bin", label: "Large V3 Turbo Q5", sizeBytes: 574041195, installed: false, recommended: true },
 ];
 
 async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
@@ -65,7 +65,7 @@ async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>): Promi
     case "list_meetings":
       return [] as T;
     case "list_mics":
-      return ["System default", "Microphone (Realtek)"] as T;
+      return ["Microphone (Realtek)", "Microphone (USB Audio Device - High Definition Audio Input)"] as T;
     case "get_dictionary":
       return { words: [{ from: "local flow", to: "LocalFlow" }] } as T;
     case "set_dictionary":
@@ -76,6 +76,10 @@ async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>): Promi
       return undefined as T;
     case "data_paths":
       return { mcpHint: "http://127.0.0.1:17832/mcp" } as T;
+    case "download_model":
+    case "import_model":
+    case "delete_model":
+      throw new Error("Model files can be changed in the Windows app.");
     case "ensure_model":
       return "C:\\Users\\demo\\.localflow\\models\\ggml-base.bin" as T;
     case "get_status":
